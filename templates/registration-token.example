@@ -1,0 +1,5 @@
+# Matrix registration token for the local Tuwunel instance.
+# Replace this file's contents when bootstrapping the encrypted secret.
+
+# Example:
+# your-registration-token-here
