@@ -15,6 +15,20 @@ in
     mode = "0400";
   };
 
+  age.secrets.lab-runtime-env = {
+    file = hostSecretsDir + "/lab-runtime.env.age";
+    owner = runtimeUser;
+    group = runtimeGroup;
+    mode = "0400";
+  };
+
+  age.secrets.chat-runtime-env = {
+    file = hostSecretsDir + "/chat-runtime.env.age";
+    owner = runtimeUser;
+    group = runtimeGroup;
+    mode = "0400";
+  };
+
   age.secrets.agent-integrations-env = {
     file = sharedSecretsDir + "/agent-integrations.env.age";
     owner = runtimeUser;

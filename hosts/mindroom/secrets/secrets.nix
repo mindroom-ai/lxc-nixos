@@ -15,5 +15,7 @@ let
 in
 {
   "agent-runtime.env.age".publicKeys = recipients;
+  "lab-runtime.env.age".publicKeys = recipients;
+  "chat-runtime.env.age".publicKeys = recipients;
   "registration-token.age".publicKeys = recipients;
 }

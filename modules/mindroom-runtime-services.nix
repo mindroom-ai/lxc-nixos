@@ -10,6 +10,8 @@ let
   labStateDir = config.mindroom.runtime.labStateDir;
   chatStateDir = config.mindroom.runtime.chatStateDir;
   agentRuntimeEnvPath = config.age.secrets.agent-runtime-env.path;
+  labRuntimeEnvPath = config.age.secrets.lab-runtime-env.path;
+  chatRuntimeEnvPath = config.age.secrets.chat-runtime-env.path;
   agentIntegrationsEnvPath = config.age.secrets.agent-integrations-env.path;
   agentToolingEnvPath = config.age.secrets.agent-tooling-env.path;
   agentEnvironmentFiles = [
@@ -36,7 +38,10 @@ in
         User = runtimeUser;
         Group = runtimeGroup;
         WorkingDirectory = labStateDir;
-        EnvironmentFile = agentEnvironmentFiles ++ [ "${labStateDir}/.env" ];
+        EnvironmentFile = agentEnvironmentFiles ++ [
+          labRuntimeEnvPath
+          "-${labStateDir}/.env"
+        ];
         Environment = [
           "MINDROOM_CONFIG_PATH=${labStateDir}/config.yaml"
           "MINDROOM_STORAGE_PATH=${labStateDir}/mindroom_data"
@@ -64,7 +69,10 @@ in
         User = runtimeUser;
         Group = runtimeGroup;
         WorkingDirectory = chatStateDir;
-        EnvironmentFile = agentEnvironmentFiles ++ [ "${chatStateDir}/.env" ];
+        EnvironmentFile = agentEnvironmentFiles ++ [
+          chatRuntimeEnvPath
+          "-${chatStateDir}/.env"
+        ];
         Environment = [
           "MINDROOM_CONFIG_PATH=${chatStateDir}/config.yaml"
           "MINDROOM_STORAGE_PATH=${chatStateDir}/mindroom_data"
@@ -117,6 +125,8 @@ in
         User = runtimeUser;
         Group = runtimeGroup;
         WorkingDirectory = "/srv/mindroom-element";
+        Restart = "on-failure";
+        RestartSec = "10s";
       };
       script = ''
         set -euo pipefail

@@ -5,13 +5,18 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 host="${1:-mindroom}"
 real_editor="${EDITOR:-vi}"
 
-required_commands=(nix ragenix)
-for cmd in "${required_commands[@]}"; do
-  if ! command -v "$cmd" >/dev/null 2>&1; then
-    echo "Missing required command: $cmd" >&2
-    exit 1
-  fi
-done
+if ! command -v nix >/dev/null 2>&1; then
+  echo "Missing required command: nix" >&2
+  echo "Bootstrap secrets from any machine with Nix installed, or from inside the target NixOS container." >&2
+  exit 1
+fi
+
+if ! command -v ragenix >/dev/null 2>&1; then
+  echo "Missing required command: ragenix" >&2
+  echo "Run this via Nix, for example:" >&2
+  echo "  nix shell github:yaxitech/ragenix -c ./scripts/bootstrap-secrets.sh $host" >&2
+  exit 1
+fi
 
 host_dir="$repo_root/hosts/$host"
 host_rules="$host_dir/secrets/secrets.nix"
@@ -96,6 +101,8 @@ echo
 ensure_recipients "$shared_rules" "agent-integrations.env.age"
 ensure_recipients "$shared_rules" "agent-tooling.env.age"
 ensure_recipients "$host_rules" "agent-runtime.env.age"
+ensure_recipients "$host_rules" "lab-runtime.env.age"
+ensure_recipients "$host_rules" "chat-runtime.env.age"
 ensure_recipients "$host_rules" "registration-token.age"
 
 edit_secret \
@@ -112,6 +119,16 @@ edit_secret \
   "$host_dir/secrets/agent-runtime.env.age" \
   "$host_rules" \
   "$repo_root/templates/agent-runtime.env.example"
+
+edit_secret \
+  "$host_dir/secrets/lab-runtime.env.age" \
+  "$host_rules" \
+  "$repo_root/templates/lab-runtime.env.example"
+
+edit_secret \
+  "$host_dir/secrets/chat-runtime.env.age" \
+  "$host_rules" \
+  "$repo_root/templates/chat-runtime.env.example"
 
 edit_secret \
   "$host_dir/secrets/registration-token.age" \

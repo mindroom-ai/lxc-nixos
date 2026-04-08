@@ -86,6 +86,8 @@ in
               Type = "oneshot";
               User = repo.user;
               Group = repo.group;
+              Restart = "on-failure";
+              RestartSec = "10s";
             };
             script = ''
               set -euo pipefail
