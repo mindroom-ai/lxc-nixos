@@ -2,87 +2,199 @@
 
 Standalone NixOS flake for the MindRoom Incus LXC container.
 
-This repository preserves the current `mindroom` container shape:
+This repo is meant to feel like the existing `mindroom` container from the
+larger dotfiles tree, while intentionally excluding:
 
-- Incus LXC base configuration
-- managed Git checkouts for `mindroom`, `mindroom-cinny`, and `mindroom-element`
-- two MindRoom runtimes: `mindroom-lab` and `mindroom-chat`
-- local Tuwunel Matrix homeserver
-- Caddy routing for the app and Matrix endpoints
-- Cinny and Element frontends
-
-It intentionally excludes:
-
-- all `openclaw` checkouts, services, overlays, and `signal-cli`
-- personal users, SSH keys, hashed passwords, and home-manager state
+- all `openclaw` checkouts, overlays, services, and `signal-cli`
+- personal SSH keys
+- personal passwords
 - production secret values
+
+What it does include by default:
+
+- the current `mindroom` host shape
+- the shared baseline package set and service defaults from the dotfiles repo
+- Docker, libvirt, Incus, and `distrobox`
+- `mindroom-lab`, `mindroom-chat`, `cinny`, `element`, `tuwunel`, and `caddy`
+- `ragenix`-based secrets wiring with templates and bootstrap tooling
+
+## What Was Verified
+
+Verified in this repo:
+
+- `nix flake check`
+- `nix build .#nixosConfigurations.mindroom.config.system.build.toplevel`
+- package diff against the original dotfiles host: only `openclaw-cli` and
+  `signal-cli` are intentionally missing
+- secrets bootstrap failure path when recipients are not configured yet
+
+Not yet verified end-to-end:
+
+- a full `nixos-rebuild switch` inside a fresh Incus container
+- successful service startup with real secrets and real host keys
+
+Treat this as build-verified and setup-documented, not yet field-tested on a
+fresh container with production values.
 
 ## Repository Layout
 
-- `hosts/mindroom/`: host-specific composition and app modules
-- `modules/`: reusable standalone modules extracted from the larger dotfiles repo
-- `secrets/shared/`: shared encrypted secret definitions
-- `templates/`: plaintext templates used to seed new encrypted secrets
-- `scripts/bootstrap-secrets.sh`: guided `ragenix` bootstrap for required secrets
+- `hosts/mindroom/`: host-specific composition
+- `modules/`: shared local modules used by the host
+- `secrets/shared/`: shared encrypted secret files and recipients
+- `templates/`: plaintext templates used when bootstrapping secrets
+- `scripts/bootstrap-secrets.sh`: guided secret creation flow
 
-## Create the Incus LXC
+## Setup
 
-Create a basic NixOS LXC container in Incus first. The container should expose:
+### 1. Create the LXC
 
-- a root filesystem named `rootfs`
-- networking appropriate for your environment
+Create a basic NixOS Incus LXC first. At minimum, the container needs:
+
+- a root filesystem mounted as `rootfs`
+- network access
 - an SSH host key at `/etc/ssh/ssh_host_ed25519_key`
 
-Then build and switch this flake inside the container or from a deployment host.
+This flake assumes the host is an LXC container and imports
+`modules/lxc-container.nix`.
 
-## Secrets Setup
+### 2. Clone the Repo
 
-This repository does not ship production secrets. Before activation, you must:
+```bash
+git clone https://github.com/mindroom-ai/lxc-nixos.git
+cd lxc-nixos
+```
 
-1. Edit `secrets/shared/secrets.nix` and add your operator key plus the target host SSH key.
-2. Edit `hosts/mindroom/secrets/secrets.nix` and do the same for host-local secrets.
-3. Run:
+### 3. Add Your Operator SSH Key
+
+Edit [default.nix](/home/basnijholt/Code/lxc-nixos/hosts/mindroom/default.nix)
+and put your SSH public key in `mindroom.runtime.authorizedKeys`.
+
+Example:
+
+```nix
+  mindroom.runtime = {
+    user = "mindroom";
+    group = "mindroom";
+    home = "/var/lib/mindroom";
+    labStateDir = "/var/lib/mindroom/lab";
+    chatStateDir = "/var/lib/mindroom/chat";
+    authorizedKeys = [
+      "ssh-ed25519 AAAA... you@example"
+    ];
+  };
+```
+
+Do this before deploying. Otherwise the build works, but you will not have SSH
+access through the configured operator account.
+
+### 4. Collect the Container Host SSH Key
+
+Inside the target container, print the host public key:
+
+```bash
+sudo cat /etc/ssh/ssh_host_ed25519_key.pub
+```
+
+You will use this value as the host recipient in the next step.
+
+### 5. Configure Secret Recipients
+
+Edit these two files:
+
+- [secrets.nix](/home/basnijholt/Code/lxc-nixos/secrets/shared/secrets.nix)
+- [secrets.nix](/home/basnijholt/Code/lxc-nixos/hosts/mindroom/secrets/secrets.nix)
+
+In both files:
+
+- add at least one operator public key
+- add the target container host public key
+
+The repo ships placeholder recipient arrays and placeholder `.age` files only.
+
+### 6. Bootstrap the Required Secrets
+
+Run:
 
 ```bash
 ./scripts/bootstrap-secrets.sh mindroom
 ```
 
-The bootstrap script opens `ragenix` for each required secret and pre-populates the plaintext editor buffer from the matching template:
+The script opens `ragenix` once for each required secret and pre-populates the
+plaintext buffer from the matching template:
 
 - `templates/agent-integrations.env.example`
 - `templates/agent-tooling.env.example`
 - `templates/agent-runtime.env.example`
 - `templates/registration-token.example`
 
-The committed `.age` files are placeholders so the flake can evaluate and build.
-Replace them before running `nixos-rebuild switch` on a real host.
+Required encrypted files:
 
-## Build and Switch
+- `secrets/shared/agent-integrations.env.age`
+- `secrets/shared/agent-tooling.env.age`
+- `hosts/mindroom/secrets/agent-runtime.env.age`
+- `hosts/mindroom/secrets/registration-token.age`
 
-Evaluate and build the host:
+### 7. Evaluate and Build
 
 ```bash
 nix flake check
 nix build .#nixosConfigurations.mindroom.config.system.build.toplevel
 ```
 
-Switch on the target host:
+If you see a warning about missing SSH authorized keys, go back to step 3.
+
+### 8. Switch the Host
+
+Run this on the target container:
 
 ```bash
 sudo nixos-rebuild switch --flake .#mindroom
 ```
 
-## Expected Services
+If you are deploying from another machine, point `nixos-rebuild` at this repo
+as usual for your workflow.
 
-After activation, these services should be present:
+## Post-Deploy Checks
 
-- `git-checkout-mindroom`
-- `git-checkout-cinny`
-- `git-checkout-element`
-- `mindroom-lab`
-- `mindroom-chat`
-- `mindroom-cinny`
-- `mindroom-element-build`
-- `mindroom-element`
-- `tuwunel`
-- `caddy`
+After `nixos-rebuild switch`, verify the important services:
+
+```bash
+systemctl status git-checkout-mindroom
+systemctl status git-checkout-cinny
+systemctl status git-checkout-element
+systemctl status mindroom-lab
+systemctl status mindroom-chat
+systemctl status mindroom-cinny
+systemctl status mindroom-element-build
+systemctl status mindroom-element
+systemctl status tuwunel
+systemctl status caddy
+```
+
+Useful checks:
+
+```bash
+systemctl --failed
+sudo journalctl -u mindroom-lab -n 100 --no-pager
+sudo journalctl -u mindroom-chat -n 100 --no-pager
+sudo journalctl -u tuwunel -n 100 --no-pager
+sudo journalctl -u caddy -n 100 --no-pager
+```
+
+## Customization Points
+
+The main host-specific values live in:
+
+- [default.nix](/home/basnijholt/Code/lxc-nixos/hosts/mindroom/default.nix):
+  operator user and runtime paths
+- [constants.nix](/home/basnijholt/Code/lxc-nixos/hosts/mindroom/constants.nix):
+  domains and Tuwunel release pin
+- [mindroom.nix](/home/basnijholt/Code/lxc-nixos/hosts/mindroom/mindroom.nix):
+  MindRoom checkout source
+- [cinny.nix](/home/basnijholt/Code/lxc-nixos/hosts/mindroom/cinny.nix):
+  Cinny checkout source
+- [element.nix](/home/basnijholt/Code/lxc-nixos/hosts/mindroom/element.nix):
+  Element checkout source
+
+If you want this repo to diverge from the current container baseline, start
+there.
