@@ -1,37 +1,27 @@
-# Agent Setup Notes
+# Deployment Runbook
 
-Use this file when you need a machine-followable deployment path for the
-default `mindroom` Incus container.
+This file is the canonical, machine-followable path for deploying the
+`mindroom` NixOS configuration into a fresh Incus container. Follow the steps
+in order; each step lists the exact command and what success looks like.
 
-## Goal
-
-Deploy the `mindroom` NixOS configuration into a fresh Incus container from a
-Linux host.
+For background on what the deployed system contains, read [README.md](README.md).
 
 ## Preconditions
 
-- The Incus server runs on Linux.
-- The operator has shell access to the Incus host.
-- The operator has an SSH public key to add to
-  [default.nix](/home/basnijholt/Code/lxc-nixos/hosts/mindroom/default.nix).
-- You can run `nix` somewhere for secret bootstrapping. That can be the host, a
-  separate workstation, or the fresh NixOS container itself.
+- A Linux host that runs (or can run) Incus. The Incus daemon is Linux-only.
+- Shell access to that host.
+- An SSH public key for the operator.
+- `nix` available somewhere for secret bootstrapping: the Incus host, a
+  workstation, or the container itself.
 
-## Host Bootstrap
+## 1. Install Incus on the Host (skip if present)
 
-Ubuntu 24.04+:
+Ubuntu 24.04+: `sudo apt install incus`
+Fedora: `sudo dnf install incus`
+Ubuntu 22.04: use the Zabbly repository linked from
+<https://linuxcontainers.org/incus/docs/main/installing/>.
 
-```bash
-sudo apt install incus
-```
-
-Fedora:
-
-```bash
-sudo dnf install incus
-```
-
-Then:
+Then, once per host:
 
 ```bash
 sudo usermod -aG incus-admin "$USER"
@@ -39,44 +29,99 @@ newgrp incus-admin
 incus admin init --minimal
 ```
 
-## Recommended Deployment Flow
+## 2. Clone This Repo on the Incus Host
 
-1. Clone this repo on the Incus host.
-2. Launch the container and mount the repo:
+```bash
+git clone https://github.com/mindroom-ai/lxc-nixos.git
+cd lxc-nixos
+```
+
+## 3. Launch the Container and Mount the Repo
 
 ```bash
 incus launch images:nixos/unstable mindroom -c security.nesting=true
 incus config device add mindroom repo disk source="$PWD" path=/mnt/repo shift=true
 ```
 
-3. Add the operator SSH key to
-   [default.nix](/home/basnijholt/Code/lxc-nixos/hosts/mindroom/default.nix).
-4. Read the container host SSH key:
+`security.nesting=true` is required for Docker/Incus inside the container.
+
+## 4. Configure the Host Definition
+
+Edit [hosts/mindroom/default.nix](hosts/mindroom/default.nix):
+
+1. Put the operator SSH public key in `mindroom.runtime.authorizedKeys`.
+   Without it the build succeeds but you get no SSH access.
+2. Pick which agent runtimes to run (see README for what they are):
+   - `lab.enable = true` (default): self-contained, talks to the local
+     Tuwunel homeserver inside this container.
+   - `chat.enable = false` (default): only enable if you have pairing
+     credentials for the hosted mindroom.chat service.
+
+## 5. Collect the Container Host SSH Key
 
 ```bash
 incus exec mindroom -- /run/current-system/sw/bin/cat /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-5. Put that key into:
-   [secrets.nix](/home/basnijholt/Code/lxc-nixos/secrets/shared/secrets.nix)
-   and
-   [secrets.nix](/home/basnijholt/Code/lxc-nixos/hosts/mindroom/secrets/secrets.nix)
-   alongside at least one operator key.
-6. Bootstrap secrets:
+The stock NixOS image ships this key; the container uses it to decrypt
+secrets at activation time.
+
+## 6. Configure Secret Recipients
+
+Add BOTH the operator public key and the container host key from step 5 to
+the recipient lists in these two files:
+
+- [secrets/shared/secrets.nix](secrets/shared/secrets.nix)
+- [hosts/mindroom/secrets/secrets.nix](hosts/mindroom/secrets/secrets.nix)
+
+The repo ships empty recipient arrays and placeholder `.age` files; the
+bootstrap script refuses to run until recipients are configured.
+
+## 7. Bootstrap the Secrets
+
+Run from the repo root, on any machine with Nix (`.#ragenix` uses the
+repo-pinned ragenix, which avoids version mismatches):
 
 ```bash
-nix shell github:yaxitech/ragenix -c ./scripts/bootstrap-secrets.sh mindroom
+nix shell .#ragenix -c ./scripts/bootstrap-secrets.sh
 ```
 
-7. Run preflight checks:
+The script opens `$EDITOR` once per secret, pre-filled from the matching
+template in `templates/`. Files created:
+
+| Secret | Content |
+| --- | --- |
+| `secrets/shared/agent-integrations.env.age` | LLM provider API keys shared by all runtimes |
+| `secrets/shared/agent-tooling.env.age` | tool credentials (GitHub, search, ...) |
+| `hosts/mindroom/secrets/agent-runtime.env.age` | host-local settings shared by all runtimes |
+| `hosts/mindroom/secrets/lab-runtime.env.age` | lab runtime env (template is pre-filled with working local values) |
+| `hosts/mindroom/secrets/registration-token.age` | Tuwunel registration token — the file must contain ONLY the bare token |
+
+Rules that matter:
+
+- `registration-token.age` and the `MATRIX_REGISTRATION_TOKEN` value inside
+  `lab-runtime.env.age` must be the SAME token. Pick any random string.
+- The lab template's `MATRIX_HOMESERVER=http://127.0.0.1:8008` and
+  `MATRIX_SERVER_NAME=mindroom.lab.mindroom.chat` defaults are correct for an
+  unmodified deployment; keep them.
+- Only bootstrap `chat-runtime.env.age` when you enabled the chat runtime:
+  `./scripts/bootstrap-secrets.sh --with-chat`.
+- Re-editing an existing secret requires the operator private key. ragenix
+  finds keys in the default SSH paths; otherwise pass
+  `--identity /path/to/key`.
+
+## 8. Preflight Checks
 
 ```bash
-nix flake check
-nix build .#nixosConfigurations.mindroom.config.system.build.toplevel
-incus exec mindroom -- /run/current-system/sw/bin/curl -I https://github.com
+nix eval --raw .#nixosConfigurations.mindroom.config.system.build.toplevel.drvPath
+incus exec mindroom -- /run/current-system/sw/bin/curl -sI https://github.com -o /dev/null -w '%{http_code}\n'
 ```
 
-8. Deploy from the host-mounted repo:
+Expect a `/nix/store/...drv` path (plus a warning if you skipped the SSH key
+in step 4 — go back if so) and `200`. The checkout services clone from public
+GitHub at activation time, so GitHub must be reachable from the container.
+
+## 9. Deploy
 
 ```bash
 incus exec mindroom -- /run/current-system/sw/bin/nixos-rebuild switch \
@@ -84,54 +129,73 @@ incus exec mindroom -- /run/current-system/sw/bin/nixos-rebuild switch \
   --option sandbox false
 ```
 
-Important:
+- Use `path:/mnt/repo#mindroom`, NOT `/mnt/repo#mindroom`: the `path:` prefix
+  avoids Git ownership checks on the Incus-mounted filesystem.
+- Keep `--option sandbox false` on the stock NixOS Incus image.
+- The first switch downloads several GB; expect 10-30 minutes depending on
+  bandwidth.
+- If the switch ends with `warning: the following units failed` and a
+  non-zero exit, do not immediately treat that as fatal: first-activation
+  ordering races (checkouts and builds still running) self-heal via automatic
+  restarts. Wait a minute, then run the checks below; only debug units that
+  stay failed.
 
-- Use `path:/mnt/repo#mindroom`, not `/mnt/repo#mindroom`.
-- Keep `--option sandbox false` for this workflow on the stock NixOS Incus
-  image.
+## 10. Post-Deploy Verification
 
-## Required Secret Files
-
-Shared:
-
-- `secrets/shared/agent-integrations.env.age`
-- `secrets/shared/agent-tooling.env.age`
-
-Host-local:
-
-- `hosts/mindroom/secrets/agent-runtime.env.age`
-- `hosts/mindroom/secrets/lab-runtime.env.age`
-- `hosts/mindroom/secrets/chat-runtime.env.age`
-- `hosts/mindroom/secrets/registration-token.age`
-
-The templates in `templates/` are only placeholders. They describe expected
-keys, not valid production values.
-
-## Post-Deploy Expectations
-
-- `tuwunel`, `caddy`, `cinny`, and `element` should be the first things to
-  verify.
-- `mindroom-lab` and `mindroom-chat` only become useful once their runtime env
-  secrets contain real values.
-- `libvirtd.service` may fail in a plain Incus container. That is expected
-  unless you deliberately provision nested virtualization support.
-
-## Recovery Commands
-
-If the Element checkout/build path fails during the first activation, rerun:
+The web UIs are built inside the container on first activation, so
+`mindroom-cinny` and `mindroom-element` take a few extra minutes to come up
+after the switch finishes. Check the builds first:
 
 ```bash
-incus exec mindroom -- /run/current-system/sw/bin/systemctl restart \
-  git-checkout-element.service \
-  mindroom-element-build.service \
-  mindroom-element.service
+incus exec mindroom -- /run/current-system/sw/bin/systemctl status mindroom-cinny-build mindroom-element-build --no-pager
 ```
 
-To inspect failures:
+Then the full set (drop `mindroom-lab` or add `mindroom-chat` to match your
+toggles):
 
 ```bash
 incus exec mindroom -- /run/current-system/sw/bin/systemctl --failed --no-pager
+incus exec mindroom -- /run/current-system/sw/bin/systemctl status \
+  tuwunel caddy mindroom-lab mindroom-cinny mindroom-element --no-pager
+```
+
+Functional checks from the Incus host (replace the IP with the container's):
+
+```bash
+# Grab the eth0 address (the container also has a docker0 interface):
+IP=$(incus list mindroom -c 4 -f csv | tr ',' '\n' | grep '(eth0)' | awk '{print $1}')
+curl -s -H 'Host: mindroom.lab.mindroom.chat' "http://$IP/_matrix/client/versions" | head -c 200
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: chat.lab.mindroom.chat' "http://$IP/"
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: element.lab.mindroom.chat' "http://$IP/"
+```
+
+Expect Matrix version JSON and two `200`s.
+
+Logs when something is off:
+
+```bash
 incus exec mindroom -- /run/current-system/sw/bin/journalctl -u mindroom-lab -n 100 --no-pager
-incus exec mindroom -- /run/current-system/sw/bin/journalctl -u mindroom-chat -n 100 --no-pager
+incus exec mindroom -- /run/current-system/sw/bin/journalctl -u mindroom-cinny-build -n 100 --no-pager
 incus exec mindroom -- /run/current-system/sw/bin/journalctl -u mindroom-element-build -n 100 --no-pager
+incus exec mindroom -- /run/current-system/sw/bin/journalctl -u tuwunel -n 100 --no-pager
+```
+
+## Expectations After Deploy
+
+- `tuwunel`, `caddy`, and both web UIs work with no external services.
+- `mindroom-lab` registers its agents on the local homeserver using the
+  registration token; agents need at least one real LLM provider key in
+  `agent-integrations.env.age` to answer.
+- TLS: nothing in this container terminates TLS. Put a TLS-terminating
+  reverse proxy in front (see README), or edit `hosts/mindroom/caddy.nix`.
+
+## Recovery
+
+If a checkout or build service fails transiently (network, OOM), rerun it:
+
+```bash
+incus exec mindroom -- /run/current-system/sw/bin/systemctl restart \
+  git-checkout-element.service mindroom-element-build.service mindroom-element.service
+incus exec mindroom -- /run/current-system/sw/bin/systemctl restart \
+  git-checkout-cinny.service mindroom-cinny-build.service mindroom-cinny.service
 ```

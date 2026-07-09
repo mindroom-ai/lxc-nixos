@@ -27,7 +27,9 @@
         modules = commonModules ++ [ ./hosts/mindroom/default.nix ];
       };
 
-      checks.${system}.mindroom =
-        self.nixosConfigurations.mindroom.config.system.build.toplevel;
+      # The pinned ragenix CLI, used by scripts/bootstrap-secrets.sh.
+      packages.${system}.ragenix = ragenix.packages.${system}.default;
+
+      checks.${system}.mindroom = self.nixosConfigurations.mindroom.config.system.build.toplevel;
     };
 }

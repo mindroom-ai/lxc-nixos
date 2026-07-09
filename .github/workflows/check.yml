@@ -1,0 +1,19 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v16
+      # Evaluate the full system instead of `nix flake check`: the check
+      # builds the entire multi-GB closure, which is pointless in CI, while
+      # evaluation still catches every Nix-level error.
+      - run: nix eval --raw .#nixosConfigurations.mindroom.config.system.build.toplevel.drvPath
+      - run: nix run nixpkgs#nixfmt -- --check flake.nix hosts modules
+        continue-on-error: true

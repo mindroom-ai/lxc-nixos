@@ -11,6 +11,11 @@ in
   services.caddy = {
     enable = true;
     virtualHosts = {
+      # All virtual hosts bind :80 on purpose: in the reference setup an
+      # external reverse proxy (Traefik) terminates TLS for the public
+      # hostnames and forwards plain HTTP to this container. If you have no
+      # such proxy, drop the ":80" suffixes so Caddy provisions certificates
+      # itself (requires public DNS + reachability on 80/443).
       "${publicSiteDomain}:80" = {
         extraConfig = ''
           route {
