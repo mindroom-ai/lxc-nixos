@@ -12,10 +12,9 @@ This README explains what you get and which knobs exist.
 | `tuwunel` | Local Matrix homeserver (MindRoom Tuwunel fork, pinned release binary) | 8008 (loopback) |
 | `caddy` | HTTP reverse proxy / routing for the three public hostnames | 80 |
 | `mindroom-cinny` | Cinny web client fork (built in-container on first activation) | 8090 (loopback) |
-| `mindroom-element` | Element web client fork (built in-container on first activation) | 8091 (loopback) |
 | `mindroom-lab` | MindRoom agent runtime — local homeserver (optional, default on) | — |
 | `mindroom-chat` | MindRoom agent runtime — hosted mindroom.chat (optional, default off) | 8766 (loopback) |
-| `git-checkout-*` | Keep the mindroom/cinny/element checkouts present and updated | — |
+| `git-checkout-*` | Keep the mindroom/cinny checkouts present and updated | — |
 
 The container also ships Docker, Incus, distrobox, and a CLI/dev toolbox for the operator account and the agents.
 
@@ -53,7 +52,7 @@ Either put one there, or remove the `":80"` suffixes in [hosts/mindroom/caddy.ni
 
 - [hosts/mindroom/default.nix](hosts/mindroom/default.nix): runtime toggles, operator SSH keys, state paths
 - [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): public domains and the Tuwunel release pin
-- [hosts/mindroom/mindroom.nix](hosts/mindroom/mindroom.nix), [cinny.nix](hosts/mindroom/cinny.nix), [element.nix](hosts/mindroom/element.nix): which repos/branches are checked out and kept updated
+- [hosts/mindroom/mindroom.nix](hosts/mindroom/mindroom.nix), [cinny.nix](hosts/mindroom/cinny.nix): which repos/branches are checked out and kept updated
 
 ## What Was Verified
 
@@ -63,14 +62,14 @@ Verified end-to-end on 2026-07-08 by deploying a fresh `images:nixos/unstable` I
 - secret bootstrap via `nix shell .#ragenix -c ./scripts/bootstrap-secrets.sh` (including the refusal path when recipients are missing) and agenix decryption inside the container at activation
 - `nixos-rebuild switch --flake 'path:/mnt/repo#mindroom'` from the host-mounted repo
 - `tuwunel`, `caddy` up; Matrix client API answering through Caddy
-- in-container Cinny and Element builds (`mindroom-cinny-build`/`mindroom-element-build`) and both web UIs serving through Caddy
+- the in-container Cinny build (`mindroom-cinny-build`) and the web UI serving through Caddy
 - `mindroom-lab` starting, installing its uv environment from the `/srv/mindroom` checkout, and registering agents on the local homeserver with the bootstrap registration token
 
 Not verified: agent conversations with real LLM provider keys, the `chat` runtime against the hosted mindroom.chat service (needs real pairing credentials), and running with a TLS-terminating proxy in front.
 
 ## Known Caveats
 
-- The first activation clones three repos and builds two web UIs inside the container; on slow networks the UI services can take several minutes after the switch returns.
+- The first activation clones two repos and builds the Cinny web UI inside the container; on slow networks the UI service can take several minutes after the switch returns.
   `systemctl --failed` plus the recovery commands in AGENTS.md cover the transient cases.
 - `mindroom-lab` needs at least one real LLM provider key (in `agent-integrations.env.age`) before agents respond to messages.
 - Nested virtualization (KVM/libvirt) is intentionally not enabled; a plain Incus container has no `/dev/kvm`.

@@ -86,11 +86,6 @@ let
         SuccessExitStatus = "143 SIGTERM";
       };
     };
-
-  # The element fork's package.json scripts invoke `pnpm` directly; route
-  # those calls through corepack (bundled with nodejs) instead of shipping a
-  # second package manager.
-  pnpmShim = pkgs.writeShellScriptBin "pnpm" ''exec corepack pnpm "$@"'';
 in
 {
   options.mindroom.runtime = {
@@ -206,79 +201,6 @@ in
             Group = cfg.group;
             WorkingDirectory = "/var/www/cinny/dist";
             ExecStart = "${pkgs.python3}/bin/python3 /var/www/cinny/serve.py 8090";
-            Restart = "always";
-            RestartSec = "5s";
-          };
-        };
-
-        mindroom-element-build = {
-          description = "Build MindRoom Web UI (Element fork)";
-          after = [
-            "network-online.target"
-            "git-checkout-element.service"
-          ];
-          wants = [
-            "network-online.target"
-            "git-checkout-element.service"
-          ];
-          wantedBy = [ "multi-user.target" ];
-          path = with pkgs; [
-            bash
-            coreutils
-            git
-            nodejs_22
-            node-gyp
-            pkg-config
-            pnpmShim
-          ];
-          serviceConfig = {
-            Type = "oneshot";
-            User = cfg.user;
-            Group = cfg.group;
-            WorkingDirectory = "/srv/mindroom-element";
-            Restart = "on-failure";
-            RestartSec = "10s";
-          };
-          script = ''
-            set -euo pipefail
-            cd /srv/mindroom-element
-
-            # Marker lives inside .git/ so the tree stays clean and
-            # git-checkout-element keeps pulling updates.
-            current_rev="$(git rev-parse HEAD)"
-            marker=.git/mindroom-webapp-build-rev
-            if [ -f webapp/index.html ] && [ -f "$marker" ] && [ "$(cat "$marker")" = "$current_rev" ]; then
-              exit 0
-            fi
-
-            cp config.mindroom.json config.json
-            export NODE_OPTIONS="--max-old-space-size=4096"
-            corepack pnpm install --frozen-lockfile
-            corepack pnpm build
-            echo "$current_rev" > "$marker"
-          '';
-        };
-
-        mindroom-element = {
-          description = "MindRoom Web UI (Element fork)";
-          after = [
-            "network-online.target"
-            "git-checkout-element.service"
-            "mindroom-element-build.service"
-          ];
-          wants = [
-            "network-online.target"
-            "git-checkout-element.service"
-            "mindroom-element-build.service"
-          ];
-          requires = [ "mindroom-element-build.service" ];
-          wantedBy = [ "multi-user.target" ];
-          serviceConfig = {
-            Type = "simple";
-            User = cfg.user;
-            Group = cfg.group;
-            WorkingDirectory = "/srv/mindroom-element/webapp";
-            ExecStart = "${pkgs.python3}/bin/python3 /srv/mindroom-element/serve.py 8091";
             Restart = "always";
             RestartSec = "5s";
           };
