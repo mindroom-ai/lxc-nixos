@@ -119,18 +119,41 @@ list_recipients() {
   "
 }
 
+# The stale-secret check hashes and re-encodes recipient keys. Prefer GNU
+# coreutils (sha256sum, basenc); fall back to openssl (present on macOS).
+# Only when neither exists is the check skipped, with a warning.
+tag_tool=""
+if command -v sha256sum >/dev/null 2>&1 && command -v basenc >/dev/null 2>&1; then
+  tag_tool="gnu"
+elif command -v openssl >/dev/null 2>&1; then
+  tag_tool="openssl"
+fi
+
+b64_decode() {
+  if [ "$tag_tool" = "openssl" ]; then
+    openssl base64 -d
+  else
+    base64 -d
+  fi
+}
+
 # age header stanzas identify ssh-ed25519 recipients by a short tag: the
 # unpadded base64 of the first 4 bytes of SHA-256 over the SSH wire-format
 # public key (i.e. the decoded base64 field of the authorized_keys line).
 recipient_tag() {
   local key_b64="$1"
-  printf '%s' "$key_b64" | base64 -d 2>/dev/null | sha256sum | cut -c1-8 |
-    tr 'a-f' 'A-F' | basenc --base16 -d 2>/dev/null | basenc --base64 | tr -d '=' || true
+  if [ "$tag_tool" = "openssl" ]; then
+    printf '%s\n' "$key_b64" | openssl base64 -d 2>/dev/null |
+      openssl dgst -sha256 -binary | head -c 4 | openssl base64 | tr -d '=\n' || true
+  else
+    printf '%s' "$key_b64" | base64 -d 2>/dev/null | sha256sum | cut -c1-8 |
+      tr 'a-f' 'A-F' | basenc --base16 -d 2>/dev/null | basenc --base64 | tr -d '=' || true
+  fi
 }
 
 file_recipient_tags() {
   sed -n '/^-----BEGIN AGE ENCRYPTED FILE-----$/,/^-----END AGE ENCRYPTED FILE-----$/p' "$1" |
-    sed '1d;$d' | base64 -d 2>/dev/null | grep -a '^-> ssh-ed25519 ' | awk '{print $3}' || true
+    sed '1d;$d' | b64_decode 2>/dev/null | grep -a '^-> ssh-ed25519 ' | awk '{print $3}' || true
 }
 
 stale_secrets=()
@@ -142,6 +165,11 @@ check_kept_secret() {
   local rules_path="$2"
   local secret_name="$3"
   local tags key key_b64 tag missing=0
+
+  if [ -z "$tag_tool" ]; then
+    echo "WARNING: cannot verify recipients of existing ${secret_path#"$repo_root"/} (needs GNU sha256sum+basenc, or openssl)." >&2
+    return 0
+  fi
 
   tags="$(file_recipient_tags "$secret_path")"
   if [ -z "$tags" ]; then
@@ -209,7 +237,9 @@ content_for lab-runtime.env "$repo_root/templates/lab-runtime.env.example" >"$co
 content_for chat-runtime.env "$repo_root/templates/chat-runtime.env.example" >"$content_dir/chat-runtime.env"
 
 if grep -q '^MATRIX_REGISTRATION_TOKEN=$' "$content_dir/lab-runtime.env"; then
-  sed -i "s|^MATRIX_REGISTRATION_TOKEN=\$|MATRIX_REGISTRATION_TOKEN=$registration_token|" "$content_dir/lab-runtime.env"
+  # sed -i.bak (no space) works with both GNU and BSD sed.
+  sed -i.bak "s|^MATRIX_REGISTRATION_TOKEN=\$|MATRIX_REGISTRATION_TOKEN=$registration_token|" "$content_dir/lab-runtime.env"
+  rm -f "$content_dir/lab-runtime.env.bak"
 elif ! grep -q "^MATRIX_REGISTRATION_TOKEN=$registration_token\$" "$content_dir/lab-runtime.env"; then
   echo "WARNING: MATRIX_REGISTRATION_TOKEN in lab-runtime.env differs from the" >&2
   echo "registration token; the lab runtime cannot register agents unless they match." >&2
@@ -221,7 +251,7 @@ edit_secret() {
   local secret_path="$1"
   local rules_path="$2"
   local content_path="$3"
-  local wrapper
+  local wrapper values_name
 
   mkdir -p "$(dirname "$secret_path")"
   if [ -f "$secret_path" ] && grep -q '^PLACEHOLDER_RAGENIX_SECRET$' "$secret_path" 2>/dev/null; then
@@ -233,6 +263,11 @@ edit_secret() {
   # it is actually encrypted to the current recipients.
   if [ "$non_interactive" = "1" ] && [ -f "$secret_path" ]; then
     echo "Keeping existing secret: ${secret_path#"$repo_root"/}"
+    values_name="$(basename "${secret_path%.age}")"
+    if [ -n "$values_dir" ] && [ -f "$values_dir/$values_name" ]; then
+      echo "NOTE: ignoring $values_dir/$values_name — the secret already exists." >&2
+      echo "Delete ${secret_path#"$repo_root"/} and re-run to apply the new value." >&2
+    fi
     check_kept_secret "$secret_path" "$rules_path" "$(basename "$secret_path")"
     return 0
   fi

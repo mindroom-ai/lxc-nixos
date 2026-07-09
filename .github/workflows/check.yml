@@ -9,11 +9,11 @@ jobs:
   eval:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@v16
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: DeterminateSystems/nix-installer-action@e50d5f73bfe71c2dd0aa4218de8f4afa59f8f81d # v16
       # The flake's check is eval-only (it instantiates the system without
       # building the closure), so `nix flake check` is cheap here and matches
       # what developers run locally.
       - run: nix flake check
-      - run: nix run nixpkgs#nixfmt -- --check flake.nix hosts modules
-        continue-on-error: true
+      - run: git ls-files '*.nix' | xargs nix run nixpkgs#nixfmt -- --check
+      - run: nix run nixpkgs#shellcheck -- scripts/*.sh

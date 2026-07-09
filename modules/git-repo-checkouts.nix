@@ -33,6 +33,18 @@ in
               description = "Branch to track.";
             };
 
+            rev = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = ''
+                Optional commit to pin the checkout to. When set and the
+                working tree is clean, the service checks out exactly this
+                commit (detached HEAD) instead of tracking the branch tip;
+                dirty working trees are never touched. updateWhenClean and
+                hardResetWhenDiverged only apply when rev is null.
+              '';
+            };
+
             user = lib.mkOption {
               type = lib.types.str;
               default = "root";
@@ -92,6 +104,9 @@ in
         ];
         serviceConfig = {
           Type = "oneshot";
+          # Stay "active (exited)" after success so a changed unit (e.g. a
+          # bumped pin) is restarted by nixos-rebuild switch.
+          RemainAfterExit = true;
           User = repo.user;
           Group = repo.group;
           Restart = "on-failure";
@@ -103,8 +118,17 @@ in
           repo_path=${lib.escapeShellArg repo.path}
           repo_url=${lib.escapeShellArg repo.url}
           repo_branch=${lib.escapeShellArg repo.branch}
+          repo_rev=${lib.escapeShellArg (if repo.rev == null then "" else repo.rev)}
           update_when_clean=${if repo.updateWhenClean then "1" else "0"}
           hard_reset_when_diverged=${if repo.hardResetWhenDiverged then "1" else "0"}
+
+          # Make sure the pinned commit exists locally; a rev can be ahead of
+          # the last fetched branch tip (GitHub allows fetching bare commits).
+          ensure_rev_present() {
+            if ! git -C "$repo_path" rev-parse --verify --quiet "$repo_rev^{commit}" >/dev/null; then
+              git -C "$repo_path" fetch origin "$repo_rev"
+            fi
+          }
 
           if [ ! -d "$repo_path/.git" ]; then
             if [ -d "$repo_path" ] && [ -n "$(ls -A "$repo_path")" ]; then
@@ -113,11 +137,29 @@ in
             fi
             mkdir -p "$repo_path"
             git clone --origin origin --branch "$repo_branch" "$repo_url" "$repo_path"
+            if [ -n "$repo_rev" ]; then
+              ensure_rev_present
+              git -C "$repo_path" checkout --detach "$repo_rev"
+            fi
             exit 0
           fi
 
           git -C "$repo_path" remote set-url origin "$repo_url"
           git -C "$repo_path" fetch --prune origin "$repo_branch"
+
+          if [ -n "$repo_rev" ]; then
+            if [ -n "$(git -C "$repo_path" status --porcelain)" ]; then
+              echo "Working tree has local changes; leaving $repo_path untouched."
+              exit 0
+            fi
+            ensure_rev_present
+            if [ "$(git -C "$repo_path" rev-parse HEAD)" = "$(git -C "$repo_path" rev-parse "$repo_rev^{commit}")" ]; then
+              exit 0
+            fi
+            echo "Checking out pinned revision $repo_rev in $repo_path."
+            git -C "$repo_path" checkout --detach "$repo_rev"
+            exit 0
+          fi
 
           if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$repo_branch"; then
             git -C "$repo_path" checkout "$repo_branch"

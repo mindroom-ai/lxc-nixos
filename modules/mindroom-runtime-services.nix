@@ -36,8 +36,9 @@ let
       name,
       dir,
       matrixServerPreset,
-      runArgs ? "run",
-      extraEnvironment ? [ ],
+      # The bundled dashboard/API server would bind 0.0.0.0 by default; keep
+      # it on loopback and let Caddy decide what gets exposed.
+      runArgs ? "run --api-host 127.0.0.1",
       extraEnvironmentFiles ? [ ],
     }:
     {
@@ -73,8 +74,7 @@ let
         Environment = [
           "MINDROOM_CONFIG_PATH=${dir}/config.yaml"
           "MINDROOM_STORAGE_PATH=${dir}/mindroom_data"
-        ]
-        ++ extraEnvironment;
+        ];
         ExecStart = "${mindroom-uv dir} ${runArgs}";
         Restart = "always";
         RestartSec = "10s";
@@ -129,8 +129,7 @@ in
           name = "mindroom.chat";
           dir = cfg.chatStateDir;
           matrixServerPreset = "mindroom.chat";
-          runArgs = "run --api-port 8766";
-          extraEnvironment = [ "BACKEND_PORT=8766" ];
+          runArgs = "run --api-host 127.0.0.1 --api-port 8766";
           extraEnvironmentFiles = [ config.age.secrets.chat-runtime-env.path ];
         };
       })
@@ -155,6 +154,9 @@ in
           ];
           serviceConfig = {
             Type = "oneshot";
+            # Stay "active (exited)" after success so a bumped cinny pin
+            # (via restartTriggers) re-runs the build at switch time.
+            RemainAfterExit = true;
             User = cfg.user;
             Group = cfg.group;
             WorkingDirectory = "/var/www/cinny";
@@ -163,7 +165,6 @@ in
           };
           script = ''
             set -euo pipefail
-            cd /var/www/cinny
 
             # The build marker lives inside .git/ so it never dirties the
             # working tree (a dirty tree would stop git-checkout-cinny from

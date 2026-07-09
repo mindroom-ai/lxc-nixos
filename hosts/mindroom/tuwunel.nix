@@ -26,6 +26,10 @@ let
         mkdir -p "$out/bin"
         tar -xzf "${tuwunelArchive}" -C "$TMPDIR"
         bin_path="$(find "$TMPDIR" -maxdepth 2 -type f -name tuwunel | head -n1)"
+        if [ -z "$bin_path" ]; then
+          echo "no 'tuwunel' binary found in the release archive; its layout changed" >&2
+          exit 1
+        fi
         install -m 0755 "$bin_path" "$out/bin/tuwunel"
       '';
 
@@ -81,6 +85,8 @@ in
     };
 
     environment = {
+      # Tuwunel still reads the CONDUWUIT_-prefixed variables from its
+      # conduwuit lineage.
       CONDUWUIT_CONFIG = "${tuwunelConfig}";
       LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.liburing ];
     };
