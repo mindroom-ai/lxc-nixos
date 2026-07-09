@@ -23,6 +23,15 @@ done
 
 replace() {
   local key="$1" value="$2"
+  # The value is interpolated into a sed expression below; refuse anything
+  # outside the charset of git SHAs, release tags, and SRI hashes so a weird
+  # upstream value fails loudly instead of corrupting constants.nix.
+  case "$value" in
+    *[!A-Za-z0-9._/+=-]* | "")
+      echo "Refusing to write suspicious value for $key: $value" >&2
+      exit 1
+      ;;
+  esac
   if ! grep -q "^  $key = \"" "$constants"; then
     echo "Key not found in constants.nix: $key" >&2
     exit 1
@@ -48,19 +57,30 @@ replace cinnyRev "$(branch_head mindroom-cinny dev)"
 auth=()
 if [ -n "${GH_TOKEN:-}" ]; then
   auth=(-H "Authorization: Bearer $GH_TOKEN")
+elif [ -n "${GITHUB_TOKEN:-}" ]; then
+  auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
 fi
-latest_tag="$(curl -fsSL "${auth[@]}" \
+# ${auth[@]+...} keeps the empty-array expansion safe under set -u on
+# bash < 4.4 (e.g. the stock macOS bash).
+latest_tag="$(curl -fsSL ${auth[@]+"${auth[@]}"} \
   https://api.github.com/repos/mindroom-ai/mindroom-tuwunel/releases/latest | jq -r .tag_name)"
 if [ -z "$latest_tag" ] || [ "$latest_tag" = "null" ]; then
   echo "Could not resolve the latest mindroom-tuwunel release" >&2
   exit 1
 fi
+# Validate before the tag is interpolated into the download URL below.
+case "$latest_tag" in
+  *[!A-Za-z0-9._-]*)
+    echo "Unexpected characters in release tag: $latest_tag" >&2
+    exit 1
+    ;;
+esac
 
 current_tag="$(sed -n 's|^  tuwunelVersion = "\(.*\)";|\1|p' "$constants")"
 if [ "$latest_tag" != "$current_tag" ]; then
   url="https://github.com/mindroom-ai/mindroom-tuwunel/releases/download/$latest_tag/tuwunel-$latest_tag-linux-x86_64.tar.gz"
   echo "Tuwunel $current_tag -> $latest_tag; prefetching $url"
-  hash="$(nix store prefetch-file --json "$url" | jq -r .hash)"
+  hash="$(nix --extra-experimental-features nix-command store prefetch-file --json "$url" | jq -r .hash)"
   replace tuwunelVersion "$latest_tag"
   replace tuwunelArchiveHash "$hash"
 fi
