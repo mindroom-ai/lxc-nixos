@@ -72,13 +72,41 @@ The repo ships empty recipient arrays and placeholder `.age` files; the bootstra
 
 ## 7. Bootstrap the Secrets
 
-Run from the repo root, on any machine with Nix (`.#ragenix` uses the repo-pinned ragenix, which avoids version mismatches):
+Run from the repo root, on any machine with Nix (`.#ragenix` uses the repo-pinned ragenix, which avoids version mismatches).
+
+**Non-interactive (recommended for agents and automation):**
+
+```bash
+nix shell .#ragenix -c ./scripts/bootstrap-secrets.sh --non-interactive
+```
+
+No editor is opened: every secret is encrypted from its template, the Tuwunel registration token is auto-generated and written to BOTH `registration-token.age` and `lab-runtime.env.age`, and existing secrets are kept, so re-runs are safe.
+This alone produces a fully working lab deployment; agents just cannot answer until a real LLM provider key exists.
+
+To inject real values (API keys and the like), put files in a directory and pass `--values-dir`:
+
+```bash
+install -d -m 700 /dev/shm/mindroom-secrets
+cat > /dev/shm/mindroom-secrets/agent-integrations.env <<'EOF'
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=...
+EOF
+nix shell .#ragenix -c ./scripts/bootstrap-secrets.sh --non-interactive --values-dir /dev/shm/mindroom-secrets
+rm -rf /dev/shm/mindroom-secrets
+```
+
+File names in that directory (no `.age` suffix): `agent-integrations.env`, `agent-tooling.env`, `agent-runtime.env`, `lab-runtime.env`, `chat-runtime.env`, `registration-token`.
+Missing files fall back to the template.
+The directory holds plaintext secrets — keep it on tmpfs and delete it afterwards.
+
+**Interactive (humans):**
 
 ```bash
 nix shell .#ragenix -c ./scripts/bootstrap-secrets.sh
 ```
 
-The script opens `$EDITOR` once per secret, pre-filled from the matching template in `templates/`.
+The script opens `$EDITOR` once per secret, pre-filled from the matching template (with the registration token already generated and synced into the lab env buffer).
+
 Files created:
 
 | Secret | Content |
@@ -92,11 +120,12 @@ Files created:
 Rules that matter:
 
 - `registration-token.age` and the `MATRIX_REGISTRATION_TOKEN` value inside `lab-runtime.env.age` must be the SAME token.
-  Pick any random string.
+  The bootstrap script keeps them in sync automatically; only if you edit these secrets by hand do you need to keep them identical yourself.
 - The lab template's `MATRIX_HOMESERVER=http://127.0.0.1:8008` and `MATRIX_SERVER_NAME=mindroom.lab.mindroom.chat` defaults are correct for an unmodified deployment; keep them.
 - Only bootstrap `chat-runtime.env.age` when you enabled the chat runtime: `./scripts/bootstrap-secrets.sh --with-chat`.
-- Re-editing an existing secret requires the operator private key.
+- Re-editing an existing secret interactively requires the operator private key.
   ragenix finds keys in the default SSH paths; otherwise pass `--identity /path/to/key`.
+  Non-interactive runs never re-encrypt existing secrets.
 
 ## 8. Preflight Checks
 
