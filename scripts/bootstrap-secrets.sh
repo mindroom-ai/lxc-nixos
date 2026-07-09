@@ -8,19 +8,53 @@ unset LD_LIBRARY_PATH
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 host="mindroom"
 with_chat=0
-for arg in "$@"; do
-  case "$arg" in
+non_interactive=0
+values_dir=""
+
+usage() {
+  cat <<'USAGE'
+Usage: bootstrap-secrets.sh [host] [--with-chat] [--non-interactive] [--values-dir DIR]
+
+  --with-chat        Also bootstrap chat-runtime.env.age (only needed when
+                     mindroom.runtime.chat.enable = true).
+  --non-interactive  Never open an editor. Each secret is encrypted from its
+                     template (or the matching file in --values-dir), the
+                     registration token is generated automatically and synced
+                     into lab-runtime.env, and existing secrets are kept.
+  --values-dir DIR   Take secret contents from DIR instead of templates/.
+                     File names (no .age suffix): agent-integrations.env,
+                     agent-tooling.env, agent-runtime.env, lab-runtime.env,
+                     chat-runtime.env, registration-token.
+                     Missing files fall back to the template.
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
     --with-chat) with_chat=1 ;;
-    -h|--help)
-      echo "Usage: $0 [host] [--with-chat]"
-      echo "  --with-chat  Also bootstrap chat-runtime.env.age (only needed when"
-      echo "               mindroom.runtime.chat.enable = true)."
+    --non-interactive) non_interactive=1 ;;
+    --values-dir)
+      shift
+      values_dir="${1:?--values-dir needs an argument}"
+      ;;
+    -h | --help)
+      usage
       exit 0
       ;;
-    *) host="$arg" ;;
+    -*)
+      echo "Unknown flag: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+    *) host="$1" ;;
   esac
+  shift
 done
+
 real_editor="${EDITOR:-vi}"
+if [ "$non_interactive" = "1" ]; then
+  real_editor="true"
+fi
 
 if ! command -v nix >/dev/null 2>&1; then
   echo "Missing required command: nix" >&2
@@ -73,20 +107,77 @@ ensure_recipients() {
   fi
 }
 
+# --- Prepare the plaintext content for every secret -------------------------
+#
+# Interactive mode uses these files to seed the editor buffer; non-interactive
+# mode encrypts them as-is. Contents come from --values-dir when a matching
+# file exists there, otherwise from templates/.
+
+content_dir="$(mktemp -d)"
+trap 'rm -rf "$content_dir"' EXIT
+
+content_for() {
+  local name="$1" template="$2"
+  if [ -n "$values_dir" ] && [ -f "$values_dir/$name" ]; then
+    cat "$values_dir/$name"
+  else
+    cat "$template"
+  fi
+}
+
+# Registration token: taken from --values-dir when provided, otherwise
+# generated. The same token is written into registration-token.age and
+# lab-runtime.env so the two can never drift apart.
+if [ -n "$values_dir" ] && [ -f "$values_dir/registration-token" ]; then
+  registration_token="$(tr -d '[:space:]' <"$values_dir/registration-token")"
+else
+  registration_token="$(head -c 64 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)"
+fi
+case "$registration_token" in
+  *[!A-Za-z0-9._-]* | "")
+    echo "Registration token must be non-empty and contain only [A-Za-z0-9._-]." >&2
+    exit 1
+    ;;
+esac
+printf '%s\n' "$registration_token" >"$content_dir/registration-token"
+
+content_for agent-integrations.env "$repo_root/templates/agent-integrations.env.example" >"$content_dir/agent-integrations.env"
+content_for agent-tooling.env "$repo_root/templates/agent-tooling.env.example" >"$content_dir/agent-tooling.env"
+content_for agent-runtime.env "$repo_root/templates/agent-runtime.env.example" >"$content_dir/agent-runtime.env"
+content_for lab-runtime.env "$repo_root/templates/lab-runtime.env.example" >"$content_dir/lab-runtime.env"
+content_for chat-runtime.env "$repo_root/templates/chat-runtime.env.example" >"$content_dir/chat-runtime.env"
+
+if grep -q '^MATRIX_REGISTRATION_TOKEN=$' "$content_dir/lab-runtime.env"; then
+  sed -i "s|^MATRIX_REGISTRATION_TOKEN=\$|MATRIX_REGISTRATION_TOKEN=$registration_token|" "$content_dir/lab-runtime.env"
+elif ! grep -q "^MATRIX_REGISTRATION_TOKEN=$registration_token\$" "$content_dir/lab-runtime.env"; then
+  echo "WARNING: MATRIX_REGISTRATION_TOKEN in lab-runtime.env differs from the" >&2
+  echo "registration token; the lab runtime cannot register agents unless they match." >&2
+fi
+
+# --- Encrypt -----------------------------------------------------------------
+
 edit_secret() {
   local secret_path="$1"
   local rules_path="$2"
-  local template_path="$3"
+  local content_path="$3"
   local wrapper
 
   mkdir -p "$(dirname "$secret_path")"
   if [ -f "$secret_path" ] && grep -q '^PLACEHOLDER_RAGENIX_SECRET$' "$secret_path" 2>/dev/null; then
     rm -f "$secret_path"
   fi
+
+  # Re-encrypting an existing secret would require the operator identity;
+  # non-interactive runs keep whatever is already there instead.
+  if [ "$non_interactive" = "1" ] && [ -f "$secret_path" ]; then
+    echo "Keeping existing secret: ${secret_path#"$repo_root"/}"
+    return 0
+  fi
+
   wrapper="$(mktemp)"
   trap 'rm -f "$wrapper"' RETURN
 
-  cat > "$wrapper" <<'EOF'
+  cat >"$wrapper" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 target="$1"
@@ -99,7 +190,7 @@ exec "${BOOTSTRAP_REAL_EDITOR:-vi}" "$target"
 EOF
   chmod +x "$wrapper"
 
-  BOOTSTRAP_TEMPLATE="$template_path" \
+  BOOTSTRAP_TEMPLATE="$content_path" \
     BOOTSTRAP_REAL_EDITOR="$real_editor" \
     ragenix --editor "$wrapper" --rules "$rules_path" --edit "$secret_path"
 
@@ -127,33 +218,33 @@ fi
 edit_secret \
   "$repo_root/secrets/shared/agent-integrations.env.age" \
   "$shared_rules" \
-  "$repo_root/templates/agent-integrations.env.example"
+  "$content_dir/agent-integrations.env"
 
 edit_secret \
   "$repo_root/secrets/shared/agent-tooling.env.age" \
   "$shared_rules" \
-  "$repo_root/templates/agent-tooling.env.example"
+  "$content_dir/agent-tooling.env"
 
 edit_secret \
   "$host_dir/secrets/agent-runtime.env.age" \
   "$host_rules" \
-  "$repo_root/templates/agent-runtime.env.example"
+  "$content_dir/agent-runtime.env"
 
 edit_secret \
   "$host_dir/secrets/lab-runtime.env.age" \
   "$host_rules" \
-  "$repo_root/templates/lab-runtime.env.example"
+  "$content_dir/lab-runtime.env"
 
 edit_secret \
   "$host_dir/secrets/registration-token.age" \
   "$host_rules" \
-  "$repo_root/templates/registration-token.example"
+  "$content_dir/registration-token"
 
 if [ "$with_chat" = "1" ]; then
   edit_secret \
     "$host_dir/secrets/chat-runtime.env.age" \
     "$host_rules" \
-    "$repo_root/templates/chat-runtime.env.example"
+    "$content_dir/chat-runtime.env"
 else
   echo
   echo "Skipped chat-runtime.env.age (hosted runtime is disabled by default)."
@@ -162,3 +253,8 @@ fi
 
 echo
 echo "Secrets bootstrapped for host '$host'."
+echo "The Tuwunel registration token was written to registration-token.age and"
+echo "synced into lab-runtime.env.age; there is nothing to keep aligned by hand."
+if [ -n "$values_dir" ]; then
+  echo "Reminder: $values_dir contains plaintext secrets; delete it when done."
+fi
