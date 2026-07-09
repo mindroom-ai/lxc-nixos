@@ -42,6 +42,7 @@ incus config device add mindroom repo disk source="$PWD" path=/mnt/repo shift=tr
 ```
 
 `security.nesting=true` is required for Docker/Incus inside the container.
+`shift=true` maps host-side file ownership into the container's user namespace; without it the mounted repo is unreadable from inside.
 
 ## 4. Configure the Host Definition
 
@@ -52,6 +53,7 @@ Edit [hosts/mindroom/default.nix](hosts/mindroom/default.nix):
 2. Pick which agent runtimes to run (see README for what they are):
    - `lab.enable = true` (default): self-contained, talks to the local Tuwunel homeserver inside this container.
    - `chat.enable = false` (default): only enable if you have pairing credentials for the hosted mindroom.chat service.
+     If you enable it, remember `--with-chat` in step 7.
 
 ## 5. Collect the Container Host SSH Key
 
@@ -126,6 +128,8 @@ Rules that matter:
 - Re-editing an existing secret interactively requires the operator private key.
   ragenix finds keys in the default SSH paths; otherwise pass `--identity /path/to/key`.
   Non-interactive runs never re-encrypt existing secrets.
+- On a truly fresh clone every `.age` file is a `PLACEHOLDER_RAGENIX_SECRET` sentinel that the script replaces.
+  If a previous attempt left real `.age` files behind (for example, encrypted before the host key was added to the recipients), a non-interactive run detects that they do not match the current recipients and fails with instructions; delete the listed files and re-run.
 
 ## 8. Preflight Checks
 
@@ -135,6 +139,7 @@ incus exec mindroom -- /run/current-system/sw/bin/curl -sI https://github.com -o
 ```
 
 Expect a `/nix/store/...drv` path (plus a warning if you skipped the SSH key in step 4 — go back if so) and `200`.
+A `warning: Git tree ... is dirty` message is expected — steps 4 and 6 edit the clone.
 The checkout services clone from public GitHub at activation time, so GitHub must be reachable from the container.
 
 ## 9. Deploy
@@ -145,6 +150,7 @@ incus exec mindroom -- /run/current-system/sw/bin/nixos-rebuild switch \
   --option sandbox false
 ```
 
+- `#mindroom` selects `nixosConfigurations.mindroom` in `flake.nix` — it is NOT the container name; keep it as-is even if you named your container something else.
 - Use `path:/mnt/repo#mindroom`, NOT `/mnt/repo#mindroom`: the `path:` prefix avoids Git ownership checks on the Incus-mounted filesystem.
 - Keep `--option sandbox false` on the stock NixOS Incus image.
 - The first switch downloads several GB; expect 10-30 minutes depending on bandwidth.
@@ -193,6 +199,7 @@ incus exec mindroom -- /run/current-system/sw/bin/journalctl -u tuwunel -n 100 -
 
 - `tuwunel`, `caddy`, and both web UIs work with no external services.
 - `mindroom-lab` registers its agents on the local homeserver using the registration token; agents need at least one real LLM provider key in `agent-integrations.env.age` to answer.
+- `mindroom-lab` logs startup warnings about `__MINDROOM_OWNER_USER_ID_FROM_PAIRING__`; that placeholder is only filled by the hosted pairing flow and is harmless in lab mode.
 - TLS: nothing in this container terminates TLS.
   Put a TLS-terminating reverse proxy in front (see README), or edit `hosts/mindroom/caddy.nix`.
 
