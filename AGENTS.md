@@ -43,6 +43,7 @@ incus config device add mindroom repo disk source="$PWD" path=/mnt/repo shift=tr
 
 `security.nesting=true` is required for Docker/Incus inside the container.
 `shift=true` maps host-side file ownership into the container's user namespace; without it the mounted repo is unreadable from inside.
+You may name the container something other than `mindroom`; if you do, substitute your name in every `incus` command below (but never in the flake attribute `#mindroom`, see step 9).
 
 ## 4. Configure the Host Definition
 
@@ -75,6 +76,8 @@ The repo ships empty recipient arrays and placeholder `.age` files; the bootstra
 ## 7. Bootstrap the Secrets
 
 Run from the repo root, on any machine with Nix (`.#ragenix` uses the repo-pinned ragenix, which avoids version mismatches).
+The `nix shell` command needs flakes enabled; on a stock Nix install add `--extra-experimental-features 'nix-command flakes'` after `nix`.
+If you run this on a machine other than the Incus host, copy the results back into the clone mounted at `/mnt/repo` before deploying: the generated `.age` files AND both edited `secrets.nix` files.
 
 **Non-interactive (recommended for agents and automation):**
 
@@ -196,10 +199,20 @@ incus exec mindroom -- /run/current-system/sw/bin/journalctl -u tuwunel -n 100 -
 ## Expectations After Deploy
 
 - `tuwunel`, `caddy`, and the Cinny web UI work with no external services.
+- On the site domain only `/_matrix/*` and the well-known endpoints exist; other paths return 404 unless the chat runtime (which serves the app backend) is enabled.
 - `mindroom-lab` registers its agents on the local homeserver using the registration token; agents need at least one real LLM provider key in `agent-integrations.env.age` to answer.
 - `mindroom-lab` logs startup warnings about `__MINDROOM_OWNER_USER_ID_FROM_PAIRING__`; that placeholder is only filled by the hosted pairing flow and is harmless in lab mode.
 - TLS: nothing in this container terminates TLS.
   Put a TLS-terminating reverse proxy in front (see README), or edit `hosts/mindroom/caddy.nix`.
+
+## Updating
+
+The deployed versions are pinned in [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): the Tuwunel release and the mindroom/cinny commits.
+The `update-pins` GitHub workflow bumps the pins to the latest upstream daily (gated on `nix flake check`); `./scripts/update-pins.sh` does the same locally.
+
+To apply updates to a running container: update the repo clone (`git pull`), then re-run the deploy command from step 9.
+The switch moves the checkouts to the new pins and restarts the affected services; a cinny bump rebuilds the web UI during the switch, which takes a few extra minutes.
+Checkouts with local (uncommitted) changes are never touched by updates.
 
 ## Recovery
 

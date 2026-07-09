@@ -10,11 +10,11 @@ This README explains what you get and which knobs exist.
 | Service | Purpose | Port |
 | --- | --- | --- |
 | `tuwunel` | Local Matrix homeserver (MindRoom Tuwunel fork, pinned release binary) | 8008 (loopback) |
-| `caddy` | HTTP reverse proxy / routing for the three public hostnames | 80 |
-| `mindroom-cinny` | Cinny web client fork (built in-container on first activation) | 8090 (loopback) |
-| `mindroom-lab` | MindRoom agent runtime — local homeserver (optional, default on) | — |
-| `mindroom-chat` | MindRoom agent runtime — hosted mindroom.chat (optional, default off) | 8766 (loopback) |
-| `git-checkout-*` | Keep the mindroom/cinny checkouts present and updated | — |
+| `caddy` | HTTP reverse proxy / routing for the public hostnames | 80 |
+| `mindroom-cinny` | Cinny web client fork (built in-container on first activation) | 8090 (all interfaces; the firewall only opens 80) |
+| `mindroom-lab` | MindRoom agent runtime — local homeserver (optional, default on) | 8765 (loopback; unauthenticated dashboard/API, not proxied) |
+| `mindroom-chat` | MindRoom agent runtime — hosted mindroom.chat (optional, default off) | 8766 (loopback; proxied by Caddy when enabled) |
+| `git-checkout-*` | Keep the mindroom/cinny checkouts at the pinned revisions | — |
 
 The container also ships Docker, Incus, distrobox, and a CLI/dev toolbox for the operator account and the agents.
 
@@ -29,6 +29,20 @@ MindRoom runs as up to two independent instances of the same application, toggle
 
 Each enabled runtime gets its own state directory, `config.yaml`, uv environment, and encrypted env file; they share the two org-wide secret bundles (`agent-integrations`, `agent-tooling`).
 Secrets are only required for runtimes you actually enable.
+
+## Security Model
+
+The container is the security boundary, and everything inside it is deliberately trusted:
+the agents run as the operator account, which has passwordless sudo and Docker access, so **agents have root inside the container by design**.
+Treat the container as expendable, and do not put anything inside it that the agents must not touch.
+Externally, only port 80 is open; Tuwunel and the runtime APIs listen on loopback.
+
+## Version Pinning and Updates
+
+Everything that runs is pinned in [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): the Tuwunel release (`tuwunelVersion` + hash) and the exact commits of the mindroom and cinny checkouts (`mindroomRev`, `cinnyRev`).
+The `update-pins` GitHub workflow bumps all three to the latest upstream daily and pushes only after `nix flake check` passes; run [scripts/update-pins.sh](scripts/update-pins.sh) to do the same by hand.
+Applying an update to a running container is `git pull` in the repo clone plus the same `nixos-rebuild switch` used to deploy — the checkout services move to the new pins and the affected services restart (a cinny bump rebuilds the web UI, which adds a few minutes to the switch).
+A checkout with local changes is never touched, so in-container experiments survive switches; clean checkouts are reset to the pinned commit.
 
 ## TLS Model (Read This Before Exposing Anything)
 
@@ -51,8 +65,10 @@ Either put one there, or remove the `":80"` suffixes in [hosts/mindroom/caddy.ni
 ## Customization Points
 
 - [hosts/mindroom/default.nix](hosts/mindroom/default.nix): runtime toggles, operator SSH keys, state paths
-- [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): public domains and the Tuwunel release pin
-- [hosts/mindroom/mindroom.nix](hosts/mindroom/mindroom.nix), [cinny.nix](hosts/mindroom/cinny.nix): which repos/branches are checked out and kept updated
+- [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): public domains, the Tuwunel release pin, and the mindroom/cinny commit pins
+- [hosts/mindroom/mindroom.nix](hosts/mindroom/mindroom.nix), [cinny.nix](hosts/mindroom/cinny.nix): which repos are checked out and which pins they follow
+
+Changing the public domains in `constants.nix` is not enough by itself: `MATRIX_SERVER_NAME` inside `lab-runtime.env.age` must match, and the Cinny fork bakes its homeserver defaults into its own build, so a full domain change also needs a matching cinny-side change.
 
 ## What Was Verified
 

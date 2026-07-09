@@ -17,7 +17,7 @@
       ...
     }:
     let
-      lib = nixpkgs.lib;
+      inherit (nixpkgs) lib;
       system = "x86_64-linux";
       commonModules = [ ragenix.nixosModules.default ];
     in

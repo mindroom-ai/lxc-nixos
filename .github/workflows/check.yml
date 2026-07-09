@@ -15,5 +15,5 @@ jobs:
       # building the closure), so `nix flake check` is cheap here and matches
       # what developers run locally.
       - run: nix flake check
-      - run: nix run nixpkgs#nixfmt -- --check flake.nix hosts modules
-        continue-on-error: true
+      - run: git ls-files '*.nix' | xargs nix run nixpkgs#nixfmt -- --check
+      - run: nix run nixpkgs#shellcheck -- scripts/*.sh

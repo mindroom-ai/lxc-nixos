@@ -2,6 +2,8 @@
 let
   cfg = config.mindroom.runtime;
   anyRuntimeEnabled = cfg.lab.enable || cfg.chat.enable;
+  # Host secrets are looked up by hostname: renaming networking.hostName
+  # requires renaming hosts/<name>/ to match, or evaluation fails here.
   hostSecretsDir = ../hosts/${config.networking.hostName}/secrets;
   sharedSecretsDir = ../secrets/shared;
 

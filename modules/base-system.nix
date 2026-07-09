@@ -151,8 +151,13 @@ in
       "flakes"
     ];
 
-    programs.nix-ld.enable = true;
-    programs.nix-ld.libraries = with pkgs; [ portaudio ];
+    programs = {
+      nix-ld.enable = true;
+      nix-ld.libraries = with pkgs; [ portaudio ];
+      mosh.enable = true;
+      zsh.enable = true;
+      direnv.enable = true;
+    };
 
     services.openssh = {
       enable = true;
@@ -170,25 +175,21 @@ in
       freeMemThreshold = 10;
     };
 
-    programs.mosh.enable = true;
-    programs.zsh.enable = true;
-    programs.direnv.enable = true;
-
     users.groups.${cfg.group} = { };
     users.users.${cfg.user} = {
       isNormalUser = true;
-      description = cfg.description;
-      group = cfg.group;
+      inherit (cfg) description group home;
       extraGroups = managedGroups;
-      home = cfg.home;
       createHome = true;
       shell = pkgs.zsh;
       openssh.authorizedKeys.keys = cfg.authorizedKeys;
     };
 
     # The operator account has no password (SSH keys only), so sudo must not
-    # prompt for one. Anyone holding an operator SSH key is root on this
-    # container; treat the container as the security boundary.
+    # prompt for one. This same account runs the MindRoom agent runtimes: the
+    # agents intentionally have root access (sudo, docker) inside the
+    # container. The container itself is the security boundary — anyone with
+    # an operator SSH key, and any agent, is root inside it.
     security.sudo.wheelNeedsPassword = false;
 
     systemd.tmpfiles.rules = [
