@@ -1,8 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ragenix ships its own pinned nix binary; a foreign LD_LIBRARY_PATH (e.g.
+# from nix-ld on NixOS hosts) can inject an incompatible glibc into it.
+unset LD_LIBRARY_PATH
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-host="${1:-mindroom}"
+host="mindroom"
+with_chat=0
+for arg in "$@"; do
+  case "$arg" in
+    --with-chat) with_chat=1 ;;
+    -h|--help)
+      echo "Usage: $0 [host] [--with-chat]"
+      echo "  --with-chat  Also bootstrap chat-runtime.env.age (only needed when"
+      echo "               mindroom.runtime.chat.enable = true)."
+      exit 0
+      ;;
+    *) host="$arg" ;;
+  esac
+done
 real_editor="${EDITOR:-vi}"
 
 if ! command -v nix >/dev/null 2>&1; then
@@ -13,8 +30,8 @@ fi
 
 if ! command -v ragenix >/dev/null 2>&1; then
   echo "Missing required command: ragenix" >&2
-  echo "Run this via Nix, for example:" >&2
-  echo "  nix shell github:yaxitech/ragenix -c ./scripts/bootstrap-secrets.sh $host" >&2
+  echo "Run this via Nix from the repo root (uses the pinned ragenix):" >&2
+  echo "  nix shell .#ragenix -c ./scripts/bootstrap-secrets.sh $host" >&2
   exit 1
 fi
 
@@ -102,8 +119,10 @@ ensure_recipients "$shared_rules" "agent-integrations.env.age"
 ensure_recipients "$shared_rules" "agent-tooling.env.age"
 ensure_recipients "$host_rules" "agent-runtime.env.age"
 ensure_recipients "$host_rules" "lab-runtime.env.age"
-ensure_recipients "$host_rules" "chat-runtime.env.age"
 ensure_recipients "$host_rules" "registration-token.age"
+if [ "$with_chat" = "1" ]; then
+  ensure_recipients "$host_rules" "chat-runtime.env.age"
+fi
 
 edit_secret \
   "$repo_root/secrets/shared/agent-integrations.env.age" \
@@ -126,14 +145,20 @@ edit_secret \
   "$repo_root/templates/lab-runtime.env.example"
 
 edit_secret \
-  "$host_dir/secrets/chat-runtime.env.age" \
-  "$host_rules" \
-  "$repo_root/templates/chat-runtime.env.example"
-
-edit_secret \
   "$host_dir/secrets/registration-token.age" \
   "$host_rules" \
   "$repo_root/templates/registration-token.example"
+
+if [ "$with_chat" = "1" ]; then
+  edit_secret \
+    "$host_dir/secrets/chat-runtime.env.age" \
+    "$host_rules" \
+    "$repo_root/templates/chat-runtime.env.example"
+else
+  echo
+  echo "Skipped chat-runtime.env.age (hosted runtime is disabled by default)."
+  echo "Re-run with --with-chat if you enable mindroom.runtime.chat.enable."
+fi
 
 echo
 echo "Secrets bootstrapped for host '$host'."

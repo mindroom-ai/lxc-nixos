@@ -1,13 +1,18 @@
-{ config, ... }:
+{ config, lib, ... }:
+let
+  cfg = config.mindroom.runtime;
+in
 {
-  services.git-repo-checkouts = {
+  # The MindRoom source checkout is only needed when at least one agent
+  # runtime is enabled.
+  services.git-repo-checkouts = lib.mkIf (cfg.lab.enable || cfg.chat.enable) {
     enable = true;
     repositories.mindroom = {
       path = "/srv/mindroom";
       url = "https://github.com/mindroom-ai/mindroom.git";
       branch = "main";
-      user = config.mindroom.runtime.user;
-      group = config.mindroom.runtime.group;
+      user = cfg.user;
+      group = cfg.group;
       updateWhenClean = true;
     };
   };

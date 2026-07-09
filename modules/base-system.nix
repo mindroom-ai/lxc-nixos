@@ -1,6 +1,13 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.mindroom.runtime;
+
+  # CLI toolbox available to the operator account and to MindRoom agents.
   cliPowerTools = with pkgs; [
     _1password-cli
     act
@@ -11,7 +18,6 @@ let
     bat
     btop
     coreutils
-    cups
     docker
     devbox
     devenv
@@ -34,10 +40,8 @@ let
     iperf3
     jq
     just
-    keyd
     lazydocker
     lazygit
-    lm_sensors
     lsof
     micro
     mosh
@@ -63,8 +67,6 @@ let
     tree
     typst
     unzip
-    usbutils
-    wakeonlan
     wget
     yazi-unwrapped
     yq-go
@@ -79,17 +81,17 @@ let
     gcc
     gnumake
     meson
-    nodejs_20
+    nodejs_22
     pkg-config
     portaudio
     (python3.withPackages (ps: [ ps.pipx ]))
   ];
 
-  managedGroups =
-    [ "wheel" ]
-    ++ lib.optionals config.virtualisation.docker.enable [ "docker" ]
-    ++ lib.optionals config.virtualisation.libvirtd.enable [ "libvirtd" ]
-    ++ lib.optionals config.virtualisation.incus.enable [ "incus-admin" ];
+  managedGroups = [
+    "wheel"
+  ]
+  ++ lib.optionals config.virtualisation.docker.enable [ "docker" ]
+  ++ lib.optionals config.virtualisation.incus.enable [ "incus-admin" ];
 in
 {
   options.mindroom.runtime = {
@@ -144,27 +146,10 @@ in
 
     nixpkgs.config.allowUnfree = true;
 
-    nix.settings = {
-      experimental-features = [
-        "nix-command"
-        "flakes"
-      ];
-      trusted-users = [
-        "root"
-        cfg.user
-      ];
-    };
-
-    boot.kernelModules = [ "tcp_bbr" ];
-    boot.zfs.requestEncryptionCredentials = false;
-    boot.kernel.sysctl = {
-      "kernel.sysrq" = 1;
-      "net.ipv4.tcp_congestion_control" = "bbr";
-      "net.core.rmem_max" = 134217728;
-      "net.core.wmem_max" = 134217728;
-      "net.ipv4.tcp_rmem" = "4096 131072 134217728";
-      "net.ipv4.tcp_wmem" = "4096 16384 134217728";
-    };
+    nix.settings.experimental-features = [
+      "nix-command"
+      "flakes"
+    ];
 
     programs.nix-ld.enable = true;
     programs.nix-ld.libraries = with pkgs; [ portaudio ];
@@ -176,13 +161,9 @@ in
         PasswordAuthentication = false;
         PermitRootLogin = "no";
         UseDns = false;
-        X11Forwarding = true;
       };
     };
 
-    services.fwupd.enable = true;
-    services.syncthing.enable = true;
-    services.tailscale.enable = true;
     services.earlyoom = {
       enable = true;
       freeSwapThreshold = 10;
@@ -190,26 +171,8 @@ in
     };
 
     programs.mosh.enable = true;
-    programs.gnupg.agent = {
-      enable = true;
-      enableSSHSupport = true;
-    };
     programs.zsh.enable = true;
     programs.direnv.enable = true;
-
-    programs.ssh.knownHosts = {
-      "truenas.local" = {
-        publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJBFtTkkcsQ1KKBJ1ne2Q2COhfBSxs3H0ppO/HEirJt4";
-      };
-    };
-
-    fonts.packages = with pkgs; [
-      fira-code
-      nerd-fonts.fira-code
-      nerd-fonts.droid-sans-mono
-      nerd-fonts.jetbrains-mono
-      libertine
-    ];
 
     users.groups.${cfg.group} = { };
     users.users.${cfg.user} = {
@@ -223,16 +186,16 @@ in
       openssh.authorizedKeys.keys = cfg.authorizedKeys;
     };
 
+    # The operator account has no password (SSH keys only), so sudo must not
+    # prompt for one. Anyone holding an operator SSH key is root on this
+    # container; treat the container as the security boundary.
+    security.sudo.wheelNeedsPassword = false;
+
     systemd.tmpfiles.rules = [
       "d ${cfg.home} 0750 ${cfg.user} ${cfg.group} -"
-      "d ${cfg.labStateDir} 0750 ${cfg.user} ${cfg.group} -"
-      "d ${cfg.chatStateDir} 0750 ${cfg.user} ${cfg.group} -"
     ];
 
-    environment.systemPackages =
-      cliPowerTools
-      ++ yaziPreviewDeps
-      ++ developmentToolchains;
+    environment.systemPackages = cliPowerTools ++ yaziPreviewDeps ++ developmentToolchains;
 
     warnings = lib.optional (cfg.authorizedKeys == [ ]) ''
       No SSH authorized keys are configured for ${cfg.user}. Add at least one key

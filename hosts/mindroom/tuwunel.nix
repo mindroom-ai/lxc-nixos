@@ -1,4 +1,9 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   constants = import ./constants.nix;
   inherit (constants) siteDomain tuwunelVersion tuwunelArchiveHash;
@@ -8,16 +13,24 @@ let
     hash = tuwunelArchiveHash;
   };
 
-  tuwunelPackage = pkgs.runCommand "tuwunel-${tuwunelVersion}-linux-x86_64" {
-    nativeBuildInputs = with pkgs; [ findutils gnutar gzip ];
-  } ''
-    mkdir -p "$out/bin"
-    tar -xzf "${tuwunelArchive}" -C "$TMPDIR"
-    bin_path="$(find "$TMPDIR" -maxdepth 2 -type f -name tuwunel | head -n1)"
-    install -m 0755 "$bin_path" "$out/bin/tuwunel"
-  '';
+  tuwunelPackage =
+    pkgs.runCommand "tuwunel-${tuwunelVersion}-linux-x86_64"
+      {
+        nativeBuildInputs = with pkgs; [
+          findutils
+          gnutar
+          gzip
+        ];
+      }
+      ''
+        mkdir -p "$out/bin"
+        tar -xzf "${tuwunelArchive}" -C "$TMPDIR"
+        bin_path="$(find "$TMPDIR" -maxdepth 2 -type f -name tuwunel | head -n1)"
+        install -m 0755 "$bin_path" "$out/bin/tuwunel"
+      '';
 
-  tuwunelConfigTemplate = pkgs.writeText "tuwunel.toml" ''
+  # Token-gated registration; the token is loaded from an agenix-managed file.
+  tuwunelConfig = pkgs.writeText "tuwunel.toml" ''
     [global]
     server_name = "${siteDomain}"
     database_path = "/var/lib/tuwunel"
@@ -30,6 +43,13 @@ let
   '';
 in
 {
+  age.secrets.registration-token = {
+    file = ./secrets/registration-token.age;
+    owner = "tuwunel";
+    group = "tuwunel";
+    mode = "0400";
+  };
+
   users.users.tuwunel = {
     isSystemUser = true;
     group = "tuwunel";
@@ -37,22 +57,11 @@ in
   };
   users.groups.tuwunel = { };
 
-  systemd.tmpfiles.rules = [
-    "d /var/lib/tuwunel 0750 tuwunel tuwunel -"
-    "d /run/tuwunel 0755 tuwunel tuwunel -"
-  ];
-
   systemd.services.tuwunel = {
     description = "Tuwunel Matrix Homeserver (MindRoom local)";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
     wantedBy = [ "multi-user.target" ];
-
-    preStart = ''
-      ${pkgs.envsubst}/bin/envsubst \
-        -o /run/tuwunel/tuwunel.toml \
-        -i ${tuwunelConfigTemplate}
-    '';
 
     serviceConfig = {
       Type = "simple";
@@ -63,7 +72,6 @@ in
       RestartSec = "5s";
 
       StateDirectory = "tuwunel";
-      RuntimeDirectory = "tuwunel";
       ProtectSystem = "strict";
       ProtectHome = true;
       PrivateTmp = true;
@@ -73,7 +81,7 @@ in
     };
 
     environment = {
-      CONDUWUIT_CONFIG = "/run/tuwunel/tuwunel.toml";
+      CONDUWUIT_CONFIG = "${tuwunelConfig}";
       LD_LIBRARY_PATH = lib.makeLibraryPath [ pkgs.liburing ];
     };
   };
