@@ -107,6 +107,67 @@ ensure_recipients() {
   fi
 }
 
+list_recipients() {
+  local rules_path="$1"
+  local secret_name="$2"
+
+  nix eval --impure --raw --expr "
+    let
+      rules = import (builtins.toPath \"$rules_path\");
+    in
+      builtins.concatStringsSep \"\n\" rules.\"$secret_name\".publicKeys
+  "
+}
+
+# age header stanzas identify ssh-ed25519 recipients by a short tag: the
+# unpadded base64 of the first 4 bytes of SHA-256 over the SSH wire-format
+# public key (i.e. the decoded base64 field of the authorized_keys line).
+recipient_tag() {
+  local key_b64="$1"
+  printf '%s' "$key_b64" | base64 -d 2>/dev/null | sha256sum | cut -c1-8 |
+    tr 'a-f' 'A-F' | basenc --base16 -d 2>/dev/null | basenc --base64 | tr -d '=' || true
+}
+
+file_recipient_tags() {
+  sed -n '/^-----BEGIN AGE ENCRYPTED FILE-----$/,/^-----END AGE ENCRYPTED FILE-----$/p' "$1" |
+    sed '1d;$d' | base64 -d 2>/dev/null | grep -a '^-> ssh-ed25519 ' | awk '{print $3}' || true
+}
+
+stale_secrets=()
+
+# A kept secret that is not encrypted to the current recipient set would only
+# fail much later, at activation time on the target host. Catch it here.
+check_kept_secret() {
+  local secret_path="$1"
+  local rules_path="$2"
+  local secret_name="$3"
+  local tags key key_b64 tag missing=0
+
+  tags="$(file_recipient_tags "$secret_path")"
+  if [ -z "$tags" ]; then
+    echo "WARNING: could not read recipients from existing ${secret_path#"$repo_root"/}; unable to verify it matches the current recipient list." >&2
+    return 0
+  fi
+
+  while IFS= read -r key; do
+    case "$key" in
+      ssh-ed25519\ *) ;;
+      *) continue ;;
+    esac
+    key_b64="$(printf '%s' "$key" | awk '{print $2}')"
+    tag="$(recipient_tag "$key_b64")"
+    [ -n "$tag" ] || continue
+    if ! printf '%s\n' "$tags" | grep -qx -- "$tag"; then
+      echo "ERROR: existing ${secret_path#"$repo_root"/} is NOT encrypted to current recipient: $key" >&2
+      missing=1
+    fi
+  done <<<"$(list_recipients "$rules_path" "$secret_name")"
+
+  if [ "$missing" = "1" ]; then
+    stale_secrets+=("$secret_path")
+  fi
+}
+
 # --- Prepare the plaintext content for every secret -------------------------
 #
 # Interactive mode uses these files to seed the editor buffer; non-interactive
@@ -168,9 +229,11 @@ edit_secret() {
   fi
 
   # Re-encrypting an existing secret would require the operator identity;
-  # non-interactive runs keep whatever is already there instead.
+  # non-interactive runs keep whatever is already there instead — but verify
+  # it is actually encrypted to the current recipients.
   if [ "$non_interactive" = "1" ] && [ -f "$secret_path" ]; then
     echo "Keeping existing secret: ${secret_path#"$repo_root"/}"
+    check_kept_secret "$secret_path" "$rules_path" "$(basename "$secret_path")"
     return 0
   fi
 
@@ -202,8 +265,8 @@ echo "Repo root: $repo_root"
 echo "Target host: $host"
 echo
 echo "Add the host SSH public key to the recipient lists before editing secrets."
-echo "Example command on the target container:"
-echo "  sudo cat /etc/ssh/ssh_host_ed25519_key.pub"
+echo "Example command from the Incus host:"
+echo "  incus exec mindroom -- /run/current-system/sw/bin/cat /etc/ssh/ssh_host_ed25519_key.pub"
 echo
 
 ensure_recipients "$shared_rules" "agent-integrations.env.age"
@@ -249,6 +312,20 @@ else
   echo
   echo "Skipped chat-runtime.env.age (hosted runtime is disabled by default)."
   echo "Re-run with --with-chat if you enable mindroom.runtime.chat.enable."
+fi
+
+if [ "${#stale_secrets[@]}" -gt 0 ]; then
+  echo >&2
+  echo "FAILURE: the following existing secrets are not encrypted to the current" >&2
+  echo "recipient set, so the target host would fail to decrypt them at activation:" >&2
+  for s in "${stale_secrets[@]}"; do
+    echo "  - ${s#"$repo_root"/}" >&2
+  done
+  echo "Fix by either deleting the listed files and re-running this script, or" >&2
+  echo "re-encrypting them to the current recipients (needs an operator identity" >&2
+  echo "that can decrypt them):" >&2
+  echo "  ragenix --rules <secrets.nix> --rekey --identity /path/to/key" >&2
+  exit 1
 fi
 
 echo
