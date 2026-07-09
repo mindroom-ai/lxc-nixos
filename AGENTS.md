@@ -37,10 +37,17 @@ cd lxc-nixos
 ## 3. Launch the Container and Mount the Repo
 
 ```bash
+incus info mindroom >/dev/null 2>&1 && {
+  echo "Container 'mindroom' already exists; refusing to continue."
+  exit 1
+}
+
 incus launch images:nixos/unstable mindroom -c security.nesting=true
 incus config device add mindroom repo disk source="$PWD" path=/mnt/repo shift=true
 ```
 
+The guard must print nothing and continue only when `mindroom` does not exist.
+If it prints the refusal message, stop: this runbook is for a fresh container, not an existing deployment.
 `security.nesting=true` is required for Docker/Incus inside the container.
 `shift=true` maps host-side file ownership into the container's user namespace; without it the mounted repo is unreadable from inside.
 You may name the container something other than `mindroom`; if you do, substitute your name in every `incus` command below (but never in the flake attribute `#mindroom`, see step 9).
