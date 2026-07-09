@@ -30,6 +30,17 @@
       # The pinned ragenix CLI, used by scripts/bootstrap-secrets.sh.
       packages.${system}.ragenix = ragenix.packages.${system}.default;
 
-      checks.${system}.mindroom = self.nixosConfigurations.mindroom.config.system.build.toplevel;
+      # Eval-only check: `nix flake check` instantiates the full system
+      # (catching every Nix-level error) without building the multi-GB
+      # closure. unsafeDiscardOutputDependency keeps the .drv reference from
+      # pulling in the system's build outputs.
+      checks.${system}.mindroom =
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          toplevelDrv = builtins.unsafeDiscardOutputDependency self.nixosConfigurations.mindroom.config.system.build.toplevel.drvPath;
+        in
+        pkgs.runCommand "mindroom-eval-check" { } ''
+          echo ${toplevelDrv} > $out
+        '';
     };
 }

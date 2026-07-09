@@ -17,9 +17,10 @@ let
   ];
 
   # Each runtime gets its own uv environment so lab and chat never rebuild the
-  # shared /srv/mindroom venv under each other's feet.
+  # shared /srv/mindroom venv under each other's feet. The wrapper forwards
+  # its arguments to the mindroom CLI, so call sites pass subcommands.
   mindroom-uv =
-    dir: args:
+    dir:
     pkgs.writeShellScript "mindroom-uv" ''
       export PATH="${pkgs.coreutils}/bin:${pkgs.uv}/bin:/run/current-system/sw/bin:$PATH"
       export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:''${LD_LIBRARY_PATH:-}"
@@ -27,7 +28,7 @@ let
       exec uv run --python ${mindroomPython}/bin/python3 \
         --project "/srv/mindroom" \
         --directory "${dir}" \
-        mindroom ${args}
+        mindroom "$@"
     '';
 
   mkMindroomRuntime =
@@ -57,7 +58,8 @@ let
       # remains available for manual local overrides.
       preStart = ''
         if [ ! -f "${dir}/config.yaml" ]; then
-          ${mindroom-uv dir "config init --no-input --matrix-server ${matrixServerPreset} --path ${dir}/config.yaml"}
+          ${mindroom-uv dir} config init --no-input \
+            --matrix-server ${matrixServerPreset} --path "${dir}/config.yaml"
           : > "${dir}/.env"
         fi
       '';
@@ -73,7 +75,7 @@ let
           "MINDROOM_STORAGE_PATH=${dir}/mindroom_data"
         ]
         ++ extraEnvironment;
-        ExecStart = "${mindroom-uv dir runArgs}";
+        ExecStart = "${mindroom-uv dir} ${runArgs}";
         Restart = "always";
         RestartSec = "10s";
         # The first start installs the uv environment for the /srv/mindroom

@@ -11,9 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@v16
-      # Evaluate the full system instead of `nix flake check`: the check
-      # builds the entire multi-GB closure, which is pointless in CI, while
-      # evaluation still catches every Nix-level error.
-      - run: nix eval --raw .#nixosConfigurations.mindroom.config.system.build.toplevel.drvPath
+      # The flake's check is eval-only (it instantiates the system without
+      # building the closure), so `nix flake check` is cheap here and matches
+      # what developers run locally.
+      - run: nix flake check
       - run: nix run nixpkgs#nixfmt -- --check flake.nix hosts modules
         continue-on-error: true
