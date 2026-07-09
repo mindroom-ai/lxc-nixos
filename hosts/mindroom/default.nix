@@ -11,7 +11,6 @@
     ./networking.nix
     ./mindroom.nix
     ./cinny.nix
-    ./element.nix
     ./tuwunel.nix
     ./caddy.nix
   ];

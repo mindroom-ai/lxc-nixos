@@ -159,11 +159,11 @@ incus exec mindroom -- /run/current-system/sw/bin/nixos-rebuild switch \
 
 ## 10. Post-Deploy Verification
 
-The web UIs are built inside the container on first activation, so `mindroom-cinny` and `mindroom-element` take a few extra minutes to come up after the switch finishes.
-Check the builds first:
+The Cinny web UI is built inside the container on first activation, so `mindroom-cinny` takes a few extra minutes to come up after the switch finishes.
+Check the build first:
 
 ```bash
-incus exec mindroom -- /run/current-system/sw/bin/systemctl status mindroom-cinny-build mindroom-element-build --no-pager
+incus exec mindroom -- /run/current-system/sw/bin/systemctl status mindroom-cinny-build --no-pager
 ```
 
 Then the full set (drop `mindroom-lab` or add `mindroom-chat` to match your toggles):
@@ -171,7 +171,7 @@ Then the full set (drop `mindroom-lab` or add `mindroom-chat` to match your togg
 ```bash
 incus exec mindroom -- /run/current-system/sw/bin/systemctl --failed --no-pager
 incus exec mindroom -- /run/current-system/sw/bin/systemctl status \
-  tuwunel caddy mindroom-lab mindroom-cinny mindroom-element --no-pager
+  tuwunel caddy mindroom-lab mindroom-cinny --no-pager
 ```
 
 Functional checks from the Incus host (replace the IP with the container's):
@@ -181,23 +181,21 @@ Functional checks from the Incus host (replace the IP with the container's):
 IP=$(incus list mindroom -c 4 -f csv | tr ',' '\n' | grep '(eth0)' | awk '{print $1}')
 curl -s -H 'Host: mindroom.lab.mindroom.chat' "http://$IP/_matrix/client/versions" | head -c 200
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: chat.lab.mindroom.chat' "http://$IP/"
-curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: element.lab.mindroom.chat' "http://$IP/"
 ```
 
-Expect Matrix version JSON and two `200`s.
+Expect Matrix version JSON and a `200`.
 
 Logs when something is off:
 
 ```bash
 incus exec mindroom -- /run/current-system/sw/bin/journalctl -u mindroom-lab -n 100 --no-pager
 incus exec mindroom -- /run/current-system/sw/bin/journalctl -u mindroom-cinny-build -n 100 --no-pager
-incus exec mindroom -- /run/current-system/sw/bin/journalctl -u mindroom-element-build -n 100 --no-pager
 incus exec mindroom -- /run/current-system/sw/bin/journalctl -u tuwunel -n 100 --no-pager
 ```
 
 ## Expectations After Deploy
 
-- `tuwunel`, `caddy`, and both web UIs work with no external services.
+- `tuwunel`, `caddy`, and the Cinny web UI work with no external services.
 - `mindroom-lab` registers its agents on the local homeserver using the registration token; agents need at least one real LLM provider key in `agent-integrations.env.age` to answer.
 - `mindroom-lab` logs startup warnings about `__MINDROOM_OWNER_USER_ID_FROM_PAIRING__`; that placeholder is only filled by the hosted pairing flow and is harmless in lab mode.
 - TLS: nothing in this container terminates TLS.
@@ -208,8 +206,6 @@ incus exec mindroom -- /run/current-system/sw/bin/journalctl -u tuwunel -n 100 -
 If a checkout or build service fails transiently (network, OOM), rerun it:
 
 ```bash
-incus exec mindroom -- /run/current-system/sw/bin/systemctl restart \
-  git-checkout-element.service mindroom-element-build.service mindroom-element.service
 incus exec mindroom -- /run/current-system/sw/bin/systemctl restart \
   git-checkout-cinny.service mindroom-cinny-build.service mindroom-cinny.service
 ```
