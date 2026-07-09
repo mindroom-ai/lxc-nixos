@@ -1,0 +1,35 @@
+name: update-pins
+
+on:
+  schedule:
+    # Daily, off the top of the hour.
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v16
+      - name: Bump pins
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/update-pins.sh
+      # nix flake check here is the merge gate: pushes made with GITHUB_TOKEN
+      # do not trigger check.yml (GitHub suppresses recursive workflows).
+      - name: Validate and push
+        run: |
+          if git diff --quiet; then
+            echo "Pins already current."
+            exit 0
+          fi
+          nix flake check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add hosts/mindroom/constants.nix
+          git commit -m "chore: bump pinned mindroom/cinny/tuwunel versions"
+          git push
