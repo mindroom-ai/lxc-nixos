@@ -218,7 +218,7 @@ The deployed versions are pinned in [hosts/mindroom/constants.nix](hosts/mindroo
 The `update-pins` GitHub workflow bumps the pins to the latest upstream daily (gated on `nix flake check`); `./scripts/update-pins.sh` does the same locally.
 
 To apply updates to a running container: update the repo clone (`git pull`), then re-run the deploy command from step 9.
-The switch moves the checkouts to the new pins and restarts the affected services; a cinny bump rebuilds the web UI during the switch, which takes a few extra minutes.
+The switch moves the checkouts to the new pins and restarts the affected services; a MindRoom Chat pin bump rebuilds the web UI during the switch, which takes a few extra minutes.
 Checkouts with local (uncommitted) changes are never touched by updates.
 
 ## Recovery
