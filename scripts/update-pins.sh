@@ -4,7 +4,7 @@ set -euo pipefail
 # Bump the pins in hosts/mindroom/constants.nix to the latest upstream state:
 #
 #   mindroomRev                        <- mindroom-ai/mindroom       branch main
-#   cinnyRev                           <- mindroom-ai/mindroom-cinny branch dev
+#   cinnyRev                           <- mindroom-ai/mindroom-chat branch dev
 #   tuwunelVersion/tuwunelArchiveHash  <- latest mindroom-tuwunel GitHub release
 #
 # Run daily by .github/workflows/update-pins.yml; also safe to run by hand
@@ -52,7 +52,7 @@ branch_head() {
 }
 
 replace mindroomRev "$(branch_head mindroom main)"
-replace cinnyRev "$(branch_head mindroom-cinny dev)"
+replace cinnyRev "$(branch_head mindroom-chat dev)"
 
 auth=()
 if [ -n "${GH_TOKEN:-}" ]; then
