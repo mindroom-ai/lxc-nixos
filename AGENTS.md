@@ -169,7 +169,7 @@ incus exec mindroom -- /run/current-system/sw/bin/nixos-rebuild switch \
 
 ## 10. Post-Deploy Verification
 
-The Cinny web UI is built inside the container on first activation, so `mindroom-cinny` takes a few extra minutes to come up after the switch finishes.
+The MindRoom Chat web UI is built inside the container on first activation, so `mindroom-cinny` takes a few extra minutes to come up after the switch finishes.
 Check the build first:
 
 ```bash
@@ -205,7 +205,7 @@ incus exec mindroom -- /run/current-system/sw/bin/journalctl -u tuwunel -n 100 -
 
 ## Expectations After Deploy
 
-- `tuwunel`, `caddy`, and the Cinny web UI work with no external services.
+- `tuwunel`, `caddy`, and the MindRoom Chat web UI work with no external services.
 - On the site domain only `/_matrix/*` and the well-known endpoints exist; other paths return 404 unless the chat runtime (which serves the app backend) is enabled.
 - `mindroom-lab` registers its agents on the local homeserver using the registration token; agents need at least one real LLM provider key in `agent-integrations.env.age` to answer.
 - `mindroom-lab` logs startup warnings about `__MINDROOM_OWNER_USER_ID_FROM_PAIRING__`; that placeholder is only filled by the hosted pairing flow and is harmless in lab mode.
@@ -214,11 +214,11 @@ incus exec mindroom -- /run/current-system/sw/bin/journalctl -u tuwunel -n 100 -
 
 ## Updating
 
-The deployed versions are pinned in [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): the Tuwunel release and the mindroom/cinny commits.
+The deployed versions are pinned in [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): the Tuwunel release and the MindRoom/MindRoom Chat commits.
 The `update-pins` GitHub workflow bumps the pins to the latest upstream daily (gated on `nix flake check`); `./scripts/update-pins.sh` does the same locally.
 
 To apply updates to a running container: update the repo clone (`git pull`), then re-run the deploy command from step 9.
-The switch moves the checkouts to the new pins and restarts the affected services; a cinny bump rebuilds the web UI during the switch, which takes a few extra minutes.
+The switch moves the checkouts to the new pins and restarts the affected services; a MindRoom Chat pin bump rebuilds the web UI during the switch, which takes a few extra minutes.
 Checkouts with local (uncommitted) changes are never touched by updates.
 
 ## Recovery

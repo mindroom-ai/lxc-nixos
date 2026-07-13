@@ -11,10 +11,10 @@ This README explains what you get and which knobs exist.
 | --- | --- | --- |
 | `tuwunel` | Local Matrix homeserver (MindRoom Tuwunel fork, pinned release binary) | 8008 (loopback) |
 | `caddy` | HTTP reverse proxy / routing for the public hostnames | 80 |
-| `mindroom-cinny` | Cinny web client fork (built in-container on first activation) | 8090 (all interfaces; the firewall only opens 80) |
+| `mindroom-cinny` | MindRoom Chat web client (built in-container on first activation) | 8090 (all interfaces; the firewall only opens 80) |
 | `mindroom-lab` | MindRoom agent runtime — local homeserver (optional, default on) | 8765 (loopback; unauthenticated dashboard/API, not proxied) |
 | `mindroom-chat` | MindRoom agent runtime — hosted mindroom.chat (optional, default off) | 8766 (loopback; proxied by Caddy when enabled) |
-| `git-checkout-*` | Keep the mindroom/cinny checkouts at the pinned revisions | — |
+| `git-checkout-*` | Keep the MindRoom and MindRoom Chat checkouts at the pinned revisions | — |
 
 The container also ships Docker, Incus, distrobox, and a CLI/dev toolbox for the operator account and the agents.
 
@@ -39,9 +39,9 @@ Externally, only port 80 is open; Tuwunel and the runtime APIs listen on loopbac
 
 ## Version Pinning and Updates
 
-Everything that runs is pinned in [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): the Tuwunel release (`tuwunelVersion` + hash) and the exact commits of the mindroom and cinny checkouts (`mindroomRev`, `cinnyRev`).
+Everything that runs is pinned in [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): the Tuwunel release (`tuwunelVersion` + hash) and the exact commits of the MindRoom and MindRoom Chat checkouts (`mindroomRev`, `cinnyRev`).
 The `update-pins` GitHub workflow bumps all three to the latest upstream daily and pushes only after `nix flake check` passes; run [scripts/update-pins.sh](scripts/update-pins.sh) to do the same by hand.
-Applying an update to a running container is `git pull` in the repo clone plus the same `nixos-rebuild switch` used to deploy — the checkout services move to the new pins and the affected services restart (a cinny bump rebuilds the web UI, which adds a few minutes to the switch).
+Applying an update to a running container is `git pull` in the repo clone plus the same `nixos-rebuild switch` used to deploy — the checkout services move to the new pins and the affected services restart (a MindRoom Chat pin bump rebuilds the web UI, which adds a few minutes to the switch).
 A checkout with local changes is never touched, so in-container experiments survive switches; clean checkouts are reset to the pinned commit.
 
 ## TLS Model (Read This Before Exposing Anything)
@@ -65,10 +65,10 @@ Either put one there, or remove the `":80"` suffixes in [hosts/mindroom/caddy.ni
 ## Customization Points
 
 - [hosts/mindroom/default.nix](hosts/mindroom/default.nix): runtime toggles, operator SSH keys, state paths
-- [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): public domains, the Tuwunel release pin, and the mindroom/cinny commit pins
+- [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): public domains, the Tuwunel release pin, and the MindRoom/MindRoom Chat commit pins
 - [hosts/mindroom/mindroom.nix](hosts/mindroom/mindroom.nix), [cinny.nix](hosts/mindroom/cinny.nix): which repos are checked out and which pins they follow
 
-Changing the public domains in `constants.nix` is not enough by itself: `MATRIX_SERVER_NAME` inside `lab-runtime.env.age` must match, and the Cinny fork bakes its homeserver defaults into its own build, so a full domain change also needs a matching cinny-side change.
+Changing the public domains in `constants.nix` is not enough by itself: `MATRIX_SERVER_NAME` inside `lab-runtime.env.age` must match, and MindRoom Chat bakes its homeserver defaults into its own build, so a full domain change also needs a matching client-side change.
 
 ## What Was Verified
 
@@ -78,14 +78,14 @@ Verified end-to-end on 2026-07-08 by deploying a fresh `images:nixos/unstable` I
 - secret bootstrap via `nix shell .#ragenix -c ./scripts/bootstrap-secrets.sh` (including the refusal path when recipients are missing) and agenix decryption inside the container at activation
 - `nixos-rebuild switch --flake 'path:/mnt/repo#mindroom'` from the host-mounted repo
 - `tuwunel`, `caddy` up; Matrix client API answering through Caddy
-- the in-container Cinny build (`mindroom-cinny-build`) and the web UI serving through Caddy
+- the in-container MindRoom Chat build (`mindroom-cinny-build`) and the web UI serving through Caddy
 - `mindroom-lab` starting, installing its uv environment from the `/srv/mindroom` checkout, and registering agents on the local homeserver with the bootstrap registration token
 
 Not verified: agent conversations with real LLM provider keys, the `chat` runtime against the hosted mindroom.chat service (needs real pairing credentials), and running with a TLS-terminating proxy in front.
 
 ## Known Caveats
 
-- The first activation clones two repos and builds the Cinny web UI inside the container; on slow networks the UI service can take several minutes after the switch returns.
+- The first activation clones two repos and builds the MindRoom Chat web UI inside the container; on slow networks the UI service can take several minutes after the switch returns.
   `systemctl --failed` plus the recovery commands in AGENTS.md cover the transient cases.
 - `mindroom-lab` needs at least one real LLM provider key (in `agent-integrations.env.age`) before agents respond to messages.
 - Nested virtualization (KVM/libvirt) is intentionally not enabled; a plain Incus container has no `/dev/kvm`.
