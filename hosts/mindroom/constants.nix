@@ -18,5 +18,5 @@ in
   # bumped daily by .github/workflows/update-pins.yml; to bump by hand run
   # scripts/update-pins.sh and rebuild.
   mindroomRev = "54aa0a72fc3c0c65242e77c1307445761457019e";
-  cinnyRev = "8561c0359dba997bc9e1b80bac2a862ecbcbd230";
+  cinnyRev = "32cc7778f8cf1d84d25274575a3c81bf7d25fb32";
 }
