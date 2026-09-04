@@ -17,6 +17,6 @@ in
   # Pinned commits for the runtime git checkouts. All pins in this file are
   # bumped daily by .github/workflows/update-pins.yml; to bump by hand run
   # scripts/update-pins.sh and rebuild.
-  mindroomRev = "62ce45e5a58b360638142324d65b126059bbdd57";
+  mindroomRev = "f12b06ab877f6a3aac6d82d6b26deb443fb36160";
   cinnyRev = "3a0dc69b0e9699ca2dca91b94231cec33d326413";
 }
