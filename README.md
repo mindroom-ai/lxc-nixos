@@ -1,5 +1,10 @@
 # MindRoom LXC NixOS
 
+<picture>
+  <source media="(prefers-reduced-motion: no-preference)" srcset="https://raw.githubusercontent.com/mindroom-ai/mindroom/main/assets/logo/logo-mark-animated.svg" />
+  <img src="https://raw.githubusercontent.com/mindroom-ai/mindroom/main/assets/logo/logo-mark.svg" alt="MindRoom Logo" align="right" width="120" />
+</picture>
+
 Standalone NixOS flake for running the MindRoom stack in an Incus LXC container: local Matrix homeserver, web clients, and the MindRoom AI agent runtime, with all secrets managed through `ragenix`.
 
 **To deploy, follow [AGENTS.md](AGENTS.md)** — it is the canonical step-by-step runbook, written to be followed verbatim by a human or an agent.
