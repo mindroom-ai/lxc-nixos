@@ -11,12 +11,12 @@ in
   publicBaseDomain = "lab.mindroom.chat";
   publicSiteDomain = siteDomain;
   publicCinnyDomain = "chat.lab.mindroom.chat";
-  tuwunelVersion = "v1.9.1-mindroom.1";
-  tuwunelArchiveHash = "sha256-oh7iJPD/okqt/g6yBGkK2p2MdW3w/5UQJoLLyKqfS6g=";
+  tuwunelVersion = "v1.9.1-mindroom.2";
+  tuwunelArchiveHash = "sha256-XRKmEHKw8hbxYEgBgIDhq37Iw80ikpWSjEmU9UrDYTo=";
 
   # Pinned commits for the runtime git checkouts. All pins in this file are
   # bumped daily by .github/workflows/update-pins.yml; to bump by hand run
   # scripts/update-pins.sh and rebuild.
-  mindroomRev = "0536e0448765741410fe9b2c24e35f413684a307";
-  cinnyRev = "c94fc08fcd4512fe61fdcce9bc05bf4eb933387c";
+  mindroomRev = "ec36f1e21dbe13147a9a9f55fa03e5b0f8de4800";
+  cinnyRev = "d0630ee172749bf1973a5085ac2b0c2868a83c71";
 }
