@@ -53,7 +53,7 @@ Secrets are only required for runtimes you actually enable.
 The container or microVM is the security boundary, and everything inside it is deliberately trusted:
 the agents run as the operator account, which has passwordless sudo and Docker access, so **agents have root inside the guest by design**.
 Treat the guest as expendable, and do not put anything inside it that the agents must not touch.
-Externally, only port 80 is open; Tuwunel and the runtime APIs listen on loopback.
+The guest firewall opens TCP 80 (Caddy), TCP 22 (SSH), and UDP 60000–61000 (mosh); Tuwunel and the runtime APIs listen on loopback. On the microVM, QEMU only forwards host loopback `127.0.0.1:8080 -> 80` and `127.0.0.1:2222 -> 22`.
 
 For the default microVM configuration specifically:
 QEMU user (SLIRP) networking lets the guest reach the host's `127.0.0.1` loopback services via `10.0.2.2`, and the 9p `ro-store` share exposes the host's entire `/nix/store` to the guest.

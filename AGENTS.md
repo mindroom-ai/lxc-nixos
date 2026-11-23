@@ -212,30 +212,33 @@ incus exec mindroom -- /run/current-system/sw/bin/journalctl -u tuwunel -n 100 -
   To register a local user and chat with `@mindroom_mind` in lab mode, run inside the guest (over SSH or `incus exec mindroom -- /run/wrappers/bin/sudo -iu mindroom bash`):
 
   ```bash
-  USER_LOCALPART="you"
-  PASSWORD=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
-  TOKEN=$(sudo cat /run/agenix/registration-token)
-  SESSION=$(curl -sS -X POST http://127.0.0.1:8008/_matrix/client/v3/register \
-    -H 'Content-Type: application/json' \
-    -d "$(jq -cn --arg u "$USER_LOCALPART" --arg p "$PASSWORD" '{username:$u,password:$p}')" | jq -r .session)
-  USER_ID=$(jq -cn --arg u "$USER_LOCALPART" --arg p "$PASSWORD" --arg s "$SESSION" --arg t "$TOKEN" \
-    '{username:$u,password:$p,auth:{type:"m.login.registration_token",token:$t,session:$s}}' | \
-    curl -sS -X POST http://127.0.0.1:8008/_matrix/client/v3/register -H 'Content-Type: application/json' -d @- | \
-    jq -r '.user_id // empty')
-  unset TOKEN
-  EXPECTED_ID="@${USER_LOCALPART}:mindroom.lab.mindroom.chat"
-  if [ "$USER_ID" != "$EXPECTED_ID" ]; then
-    echo "Registration failed (got '${USER_ID:-<empty>}')" >&2
-    exit 1
-  fi
-  printf 'Registered %s with password: %s\n' "$USER_ID" "$PASSWORD"
-  unset PASSWORD
-  sed -i "s|__MINDROOM_OWNER_USER_ID_FROM_PAIRING__|\"$USER_ID\"|g" /var/lib/mindroom/lab/config.yaml
-  sudo systemctl restart mindroom-lab
+  (
+    USER_LOCALPART="you"
+    PASSWORD=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    TOKEN=$(sudo cat /run/agenix/registration-token)
+    SESSION=$(curl -sS -X POST http://127.0.0.1:8008/_matrix/client/v3/register \
+      -H 'Content-Type: application/json' \
+      -d "$(jq -cn --arg u "$USER_LOCALPART" --arg p "$PASSWORD" '{username:$u,password:$p}')" | jq -r .session)
+    USER_ID=$(jq -cn --arg u "$USER_LOCALPART" --arg p "$PASSWORD" --arg s "$SESSION" --arg t "$TOKEN" \
+      '{username:$u,password:$p,auth:{type:"m.login.registration_token",token:$t,session:$s}}' | \
+      curl -sS -X POST http://127.0.0.1:8008/_matrix/client/v3/register -H 'Content-Type: application/json' -d @- | \
+      jq -r '.user_id // empty')
+    unset TOKEN
+    EXPECTED_ID="@${USER_LOCALPART}:mindroom.lab.mindroom.chat"
+    if [ "$USER_ID" != "$EXPECTED_ID" ]; then
+      echo "Registration failed (got '${USER_ID:-<empty>}')" >&2
+      exit 1
+    fi
+    printf 'Registered %s with password: %s\n' "$USER_ID" "$PASSWORD"
+    unset PASSWORD
+    sed -i "s|__MINDROOM_OWNER_USER_ID_FROM_PAIRING__|\"$USER_ID\"|g" /var/lib/mindroom/lab/config.yaml
+    sudo systemctl restart mindroom-lab
+  )
   ```
 
   YAML requires quotes around a leading `@`.
-  After restart, `mindroom-lab` invites `$EXPECTED_ID` to the `personal` room.
+  After restart, `mindroom-lab` invites `@you:mindroom.lab.mindroom.chat` to the `personal` room.
+  When signing in through MindRoom Chat (which defaults to hosted `mindroom.chat`), switch to/enter the lab homeserver (`https://mindroom.lab.mindroom.chat` behind your TLS proxy, or your local forwarded URL) before logging in.
 - TLS: nothing in this container terminates TLS.
   Put a TLS-terminating reverse proxy in front (see README), or edit `hosts/mindroom/caddy.nix`.
 
@@ -252,6 +255,7 @@ Upgrade notes for existing deployments:
 
 - Existing `lab-runtime.env.age` / `chat-runtime.env.age` secrets created from older templates still contain empty `OPENAI_API_KEY=` (etc.) lines that overwrite values from `agent-integrations.env.age`; re-edit them with `ragenix` to remove or comment out unused overrides.
 - A MindRoom Chat checkout (`/var/www/cinny`) with local edits stays at its old commit (the earlier Cinny-based `dev` client with root `serve.py`), so commit or discard those edits before switching.
+- If upgrading an existing microVM whose `nix-store.img` was labeled `nix-store`, relabel it while stopped: `e2label "$STATE_DIR/nix-store.img" mindroom-rw`.
 
 ## Recovery
 
@@ -285,14 +289,16 @@ Keep VM state **outside** any git work tree (a `path:` flake ref copies untracke
 
 ```bash
 STATE_DIR=~/.local/state/mindroom-microvm
-install -d -m 700 "$STATE_DIR"
-if [ "$(git -C "$STATE_DIR" rev-parse --is-inside-work-tree 2>/dev/null || true)" = "true" ]; then
-  echo "Refusing to place VM state inside a git work tree: $STATE_DIR" >&2
-  exit 1
-fi
-install -d -m 700 "$STATE_DIR/ssh"
-ssh-keygen -q -t ed25519 -N "" -C "root@mindroom" -f "$STATE_DIR/ssh/ssh_host_ed25519_key"
-cat "$STATE_DIR/ssh/ssh_host_ed25519_key.pub"
+(
+  install -d -m 700 "$STATE_DIR"
+  if [ "$(git -C "$STATE_DIR" rev-parse --is-inside-work-tree 2>/dev/null || true)" = "true" ]; then
+    echo "Refusing to place VM state inside a git work tree: $STATE_DIR" >&2
+    exit 1
+  fi
+  install -d -m 700 "$STATE_DIR/ssh"
+  ssh-keygen -q -t ed25519 -N "" -C "root@mindroom" -f "$STATE_DIR/ssh/ssh_host_ed25519_key"
+  cat "$STATE_DIR/ssh/ssh_host_ed25519_key.pub"
+)
 ```
 
 The runner mounts `$STATE_DIR/ssh` read-only early in boot (`neededForBoot = true`), so `agenix` decrypts secrets on first boot and `sshd` keeps a stable host identity across reboots.
@@ -327,7 +333,7 @@ SSH comes up in ~30–40 seconds; first-boot git checkouts, the MindRoom Chat we
 
 ### M6. Verify from the Host
 
-From another terminal on the host (adjust `STATE_DIR` or `2222`/`8080` if you changed them):
+From another terminal on the host (adjust `STATE_DIR`, `2222`/`8080` if you changed `forwardPorts`, and drop `mindroom-lab` or add `mindroom-chat` in both the wait loop and status check to match your runtime toggles):
 
 ```bash
 STATE_DIR=~/.local/state/mindroom-microvm

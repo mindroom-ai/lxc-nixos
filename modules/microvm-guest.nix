@@ -23,7 +23,7 @@ in
     # alongside uv installs, Tuwunel, and the tmpfs root.
     mem = 8192;
     # Fixed UUID so /etc/machine-id (32-hex) is stable and persistent journals
-    # under /var/log/journal survive reboots; regenerate per deployment (e.g. `systemd-id128 new`).
+    # under /var/log/journal survive reboots; regenerate per deployment (e.g. `systemd-id128 --uuid new`).
     machineId = "b8689be6-ba91-9b35-6625-0f34607521a2";
     socket = "control.sock";
 
@@ -107,7 +107,8 @@ in
       }
       {
         image = "nix-store.img";
-        label = "nix-store";
+        # Distinct from "nix-store", which microvm.storeOnDisk = true uses for /nix/.ro-store.
+        label = "mindroom-rw";
         mountPoint = "/nix/.rw-store";
         size = 8192;
       }
