@@ -120,7 +120,7 @@ Plaintext staging requires a filesystem verified as `tmpfs` (`$XDG_RUNTIME_DIR` 
 
 Supported filenames in `--values-dir` (no `.age` suffix): `agent-integrations.env`, `agent-tooling.env`, `agent-runtime.env`, `lab-runtime.env`, `chat-runtime.env`, `registration-token`.
 Missing files fall back to `templates/`.
-If you enabled `chat.enable = true`, also write `$SECRETS_TMP/chat-runtime.env` before running the script and append `--with-chat`.
+If you enabled `chat.enable = true`, add a line inside the step-7 block before `nix shell …` to write `$SECRETS_TMP/chat-runtime.env`, and append `--with-chat`.
 
 **Interactive (humans):**
 
@@ -148,7 +148,7 @@ Rules that matter:
 - `templates/lab-runtime.env.example` sets `MINDROOM_OWNER_USER_ID=@you:mindroom.lab.mindroom.chat`, which `mindroom config init` reads on first boot to populate `administrators` and `room_defaults` without editing `config.yaml` (change the localpart in `lab-runtime.env` before first boot if you want a different username). agenix provides the runtime env; config init's starter `.env` is removed.
 - Only bootstrap `chat-runtime.env.age` when you enabled the chat runtime: `./scripts/bootstrap-secrets.sh --with-chat`.
 - Upgrading an existing deployment:
-  - Add `MINDROOM_OWNER_USER_ID=@you:mindroom.lab.mindroom.chat` (or your Matrix user ID) to `lab-runtime.env.age`, and replace `__MINDROOM_OWNER_USER_ID_FROM_PAIRING__` with your quoted Matrix user ID in `/var/lib/mindroom/lab/config.yaml` once.
+  - Add `MINDROOM_OWNER_USER_ID=@you:mindroom.lab.mindroom.chat` (or your Matrix user ID) to `lab-runtime.env.age`, and replace `__MINDROOM_OWNER_USER_ID_FROM_PAIRING__` in `/var/lib/mindroom/lab/config.yaml` once with your YAML-quoted Matrix user ID (for example `"@you:mindroom.lab.mindroom.chat"`).
   - agenix values now win over any local `.env`; put overrides in the encrypted runtime env (`lab-runtime.env.age` / `chat-runtime.env.age`) and delete any empty lines such as `OPENAI_API_KEY=` that would override `agent-integrations.env.age`.
 - Re-editing an existing secret interactively requires the operator private key.
   ragenix finds keys in the default SSH paths; otherwise pass `--identity /path/to/key`.
@@ -226,9 +226,19 @@ Register the owner Matrix account, restart `mindroom-lab` so it invites you to t
 ```bash
 incus exec mindroom -- /run/current-system/sw/bin/su - mindroom -s /run/current-system/sw/bin/bash <<'EOF'
 set -euo pipefail
-OWNER_ID=$(sudo awk -F= '$1=="MINDROOM_OWNER_USER_ID"{sub(/^[^=]*=/,""); print; exit}' /run/agenix/lab-runtime-env | tr -d '\r')
+strip_quotes() {
+  local v="$1"
+  case "$v" in
+    \"*\") v="${v#\"}"; v="${v%\"}" ;;
+    \'*\') v="${v#\'}"; v="${v%\'}" ;;
+  esac
+  printf '%s' "$v"
+}
+SERVER_NAME=$(strip_quotes "$(sudo awk -F= '$1=="MATRIX_SERVER_NAME"{sub(/^[^=]*=/,""); print; exit}' /run/agenix/lab-runtime-env | tr -d '\r')")
+SERVER_NAME="${SERVER_NAME:-mindroom.lab.mindroom.chat}"
+OWNER_ID=$(strip_quotes "$(sudo awk -F= '$1=="MINDROOM_OWNER_USER_ID"{sub(/^[^=]*=/,""); print; exit}' /run/agenix/lab-runtime-env | tr -d '\r')")
 if [ -z "$OWNER_ID" ] || [ "$OWNER_ID" = "__MINDROOM_OWNER_USER_ID_FROM_PAIRING__" ]; then
-  echo "MINDROOM_OWNER_USER_ID is unset or still a placeholder in /run/agenix/lab-runtime-env; set it to @<user>:mindroom.lab.mindroom.chat and re-deploy before registering." >&2
+  echo "MINDROOM_OWNER_USER_ID is unset or still a placeholder in /run/agenix/lab-runtime-env; set it to @<user>:$SERVER_NAME and re-deploy before registering." >&2
   exit 1
 fi
 if grep -qF "__MINDROOM_OWNER_USER_ID_FROM_PAIRING__" /var/lib/mindroom/lab/config.yaml; then
@@ -238,10 +248,15 @@ fi
 case "$OWNER_ID" in
   @*:* ) ;;
   *)
-    echo "Invalid MINDROOM_OWNER_USER_ID '$OWNER_ID' (expected @<user>:<server>)." >&2
+    echo "Invalid MINDROOM_OWNER_USER_ID '$OWNER_ID' (expected @<user>:$SERVER_NAME)." >&2
     exit 1
     ;;
 esac
+OWNER_DOMAIN="${OWNER_ID#*:}"
+if [ "$OWNER_DOMAIN" != "$SERVER_NAME" ]; then
+  echo "MINDROOM_OWNER_USER_ID domain '$OWNER_DOMAIN' does not match MATRIX_SERVER_NAME '$SERVER_NAME'." >&2
+  exit 1
+fi
 USER_LOCALPART="${OWNER_ID#@}"
 USER_LOCALPART="${USER_LOCALPART%%:*}"
 PASSWORD=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')

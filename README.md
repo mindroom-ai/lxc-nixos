@@ -49,6 +49,7 @@ The NixOS deployment flake belongs to the operator on the host.
 
 - **TLS proxy required:** Caddy serves plain HTTP on port 80 only, while Matrix `.well-known` advertises `https://`. Put a TLS-terminating reverse proxy in front before exposing port 80 (or drop `:80` in [hosts/mindroom/caddy.nix](hosts/mindroom/caddy.nix) and open 443 in [hosts/mindroom/networking.nix](hosts/mindroom/networking.nix) to let Caddy terminate TLS on 80/443).
 - **Firewall:** Only TCP 80, TCP 22, and mosh UDP 60000–61000 are open; Tuwunel and the runtime APIs listen on loopback only.
+- **Mounted host checkout:** Because the deployment repo is mounted writable at `/mnt/repo`, guest root (including agents) can modify files in that host checkout.
 - **Secrets:** Committed `.age` files and `secrets.nix` are placeholders only; real secrets are encrypted with `ragenix` and decrypted at activation via `agenix`.
 
 ## Updates
