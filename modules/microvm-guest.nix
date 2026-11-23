@@ -1,6 +1,7 @@
 # Guest configuration for a standalone QEMU microVM (sibling of lxc-container.nix).
-# Runtime state (disk images, control socket, and the pre-generated SSH host key)
-# lives under .microvm/ in the directory where `nix run .#mindroom-microvm` starts.
+# Run from a private 0700 state directory OUTSIDE the git checkout (e.g.
+# ~/.local/state/mindroom-microvm) using an absolute flake ref so disk images,
+# control.sock, and ssh/ never sit inside the repo or enter /nix/store.
 { lib, ... }:
 
 let
@@ -15,14 +16,22 @@ in
     # 8 GiB covers the first-boot MindRoom Chat Vite build (NODE_OPTIONS 4 GiB)
     # alongside uv installs, Tuwunel, and the tmpfs root.
     mem = 8192;
-    socket = ".microvm/control.sock";
+    # Fixed UUID so /etc/machine-id (32-hex) is stable and persistent journals
+    # under /var/log/journal survive reboots.
+    machineId = "b8689be6-ba91-9b35-6625-0f34607521a2";
+    socket = "control.sock";
 
     preStart = ''
-      mkdir -p .microvm
-      if [ ! -f .microvm/ssh/ssh_host_ed25519_key ]; then
-        echo "Missing .microvm/ssh/ssh_host_ed25519_key; generate the VM host key first (see AGENTS.md)." >&2
+      if [ -e .git ]; then
+        echo "Refusing to store VM state inside a git checkout; cd into a private state directory first (see AGENTS.md)." >&2
         exit 1
       fi
+      if [ ! -f ssh/ssh_host_ed25519_key ]; then
+        echo "Missing $PWD/ssh/ssh_host_ed25519_key; generate the VM host key in your private state directory first (see AGENTS.md)." >&2
+        exit 1
+      fi
+      chmod 0700 .
+      umask 077
     '';
 
     interfaces = [
@@ -64,27 +73,37 @@ in
         # agenix decrypts secrets on first boot and sshd keeps a stable identity.
         proto = "9p";
         tag = "ssh-host-key";
-        source = ".microvm/ssh";
+        source = "ssh";
         mountPoint = hostKeyDir;
         readOnly = true;
       }
     ];
 
+    # Overlay a writable ext4 volume on /nix/store so `nix shell`/`nix develop`
+    # work inside the guest.
+    writableStoreOverlay = "/nix/.rw-store";
+
     # Root is tmpfs; persistent state (/var incl. /var/lib/mindroom,
-    # /var/lib/tuwunel, /var/www/cinny; and /srv/mindroom) lives on sparse ext4
-    # images created on first start under .microvm/.
+    # /var/lib/tuwunel, /var/www/cinny; /srv/mindroom; and the writable Nix
+    # store overlay) lives on sparse ext4 images created 0600 in $PWD.
     volumes = [
       {
-        image = ".microvm/var.img";
+        image = "var.img";
         label = "var";
         mountPoint = "/var";
         size = 20480;
       }
       {
-        image = ".microvm/srv.img";
+        image = "srv.img";
         label = "srv";
         mountPoint = "/srv";
         size = 4096;
+      }
+      {
+        image = "nix-store.img";
+        label = "nix-store";
+        mountPoint = "/nix/.rw-store";
+        size = 8192;
       }
     ];
   };
