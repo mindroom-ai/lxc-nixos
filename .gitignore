@@ -2,3 +2,4 @@ result
 .direnv/
 .envrc
 .DS_Store
+.microvm/

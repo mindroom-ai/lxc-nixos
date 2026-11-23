@@ -48,7 +48,7 @@
       packages.${system} = {
         # The pinned ragenix CLI, used by scripts/bootstrap-secrets.sh.
         ragenix = ragenix.packages.${system}.default;
-        # One-command QEMU microVM runner (`nix run .#mindroom-microvm`).
+        # QEMU microVM runner (build with `--out-link runner` from a private state dir; see AGENTS.md).
         mindroom-microvm = self.nixosConfigurations.mindroom-microvm.config.microvm.declaredRunner;
       };
 

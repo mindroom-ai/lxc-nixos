@@ -1,13 +1,19 @@
 # Guest configuration for a standalone QEMU microVM (sibling of lxc-container.nix).
-# Run from a private 0700 state directory OUTSIDE the git checkout (e.g.
-# ~/.local/state/mindroom-microvm) using an absolute flake ref so disk images,
-# control.sock, and ssh/ never sit inside the repo or enter /nix/store.
-{ lib, ... }:
+# Build and run from a private 0700 state directory OUTSIDE the git checkout
+# (e.g. ~/.local/state/mindroom-microvm) using an absolute flake ref so disk
+# images, control.sock, runner GC root, and ssh/ never enter the repo or /nix/store.
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
   lanMac = "02:00:00:00:00:01";
   hostKeyDir = "/etc/microvm-ssh";
   hostKeyPath = "${hostKeyDir}/ssh_host_ed25519_key";
+  hostGit = "${config.microvm.vmHostPackages.git}/bin/git";
 in
 {
   microvm = {
@@ -17,13 +23,13 @@ in
     # alongside uv installs, Tuwunel, and the tmpfs root.
     mem = 8192;
     # Fixed UUID so /etc/machine-id (32-hex) is stable and persistent journals
-    # under /var/log/journal survive reboots.
+    # under /var/log/journal survive reboots; regenerate per deployment (e.g. `systemd-id128 new`).
     machineId = "b8689be6-ba91-9b35-6625-0f34607521a2";
     socket = "control.sock";
 
     preStart = ''
-      if [ -e .git ]; then
-        echo "Refusing to store VM state inside a git checkout; cd into a private state directory first (see AGENTS.md)." >&2
+      if [ "$(${hostGit} rev-parse --is-inside-work-tree 2>/dev/null || true)" = "true" ]; then
+        echo "Refusing to store VM state inside a git work tree; cd into a private state directory first (see AGENTS.md)." >&2
         exit 1
       fi
       if [ ! -f ssh/ssh_host_ed25519_key ]; then
@@ -60,7 +66,7 @@ in
 
     shares = [
       {
-        # Share the host /nix/store read-only over 9p so `nix run` needs no
+        # Share the host /nix/store read-only over 9p so the runner needs no
         # separate virtiofsd daemon and skips building a multi-GB store disk.
         proto = "9p";
         tag = "ro-store";
@@ -85,7 +91,7 @@ in
 
     # Root is tmpfs; persistent state (/var incl. /var/lib/mindroom,
     # /var/lib/tuwunel, /var/www/cinny; /srv/mindroom; and the writable Nix
-    # store overlay) lives on sparse ext4 images created 0600 in $PWD.
+    # store overlay + DB) lives on sparse ext4 images created 0600 in $PWD.
     volumes = [
       {
         image = "var.img";
@@ -110,6 +116,13 @@ in
 
   fileSystems."${hostKeyDir}".neededForBoot = true;
   fileSystems."/var".neededForBoot = true;
+
+  # Persist the guest Nix DB alongside the writable store overlay on
+  # nix-store.img before microvm.nix runs `nix-store --load-db`.
+  boot.postBootCommands = lib.mkBefore ''
+    ${pkgs.coreutils}/bin/mkdir -p /nix/.rw-store/var /nix/var/nix
+    ${pkgs.util-linux}/bin/mountpoint -q /nix/var/nix || ${pkgs.util-linux}/bin/mount --bind /nix/.rw-store/var /nix/var/nix
+  '';
 
   age.identityPaths = lib.mkForce [ hostKeyPath ];
   services.openssh.hostKeys = [
