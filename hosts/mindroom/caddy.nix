@@ -31,6 +31,7 @@ in
 
             handle /.well-known/matrix/client {
               header Content-Type application/json
+              header Access-Control-Allow-Origin *
               respond 200 {
                 body "{\"m.homeserver\":{\"base_url\":\"https://${publicSiteDomain}\"}}"
                 close
