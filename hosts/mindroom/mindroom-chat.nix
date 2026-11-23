@@ -5,11 +5,11 @@ in
 {
   services.git-repo-checkouts = {
     enable = true;
-    repositories.cinny = {
-      path = "/var/www/cinny";
+    repositories.mindroom-chat = {
+      path = "/var/www/mindroom-chat";
       url = "https://github.com/mindroom-ai/mindroom-chat.git";
       branch = "main";
-      rev = constants.cinnyRev;
+      rev = constants.mindroomChatRev;
       user = config.mindroom.runtime.user;
       group = config.mindroom.runtime.group;
     };
@@ -17,6 +17,6 @@ in
 
   # Rebuild and restart the web UI when the pin moves (the build service
   # skips work when the checked-out revision matches its marker).
-  systemd.services.mindroom-cinny-build.restartTriggers = [ constants.cinnyRev ];
-  systemd.services.mindroom-cinny.restartTriggers = [ constants.cinnyRev ];
+  systemd.services.mindroom-chat-ui-build.restartTriggers = [ constants.mindroomChatRev ];
+  systemd.services.mindroom-chat-ui.restartTriggers = [ constants.mindroomChatRev ];
 }

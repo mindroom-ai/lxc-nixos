@@ -10,7 +10,7 @@
     ../../modules/agent-env.nix
     ./networking.nix
     ./mindroom.nix
-    ./cinny.nix
+    ./mindroom-chat.nix
     ./tuwunel.nix
     ./caddy.nix
   ];

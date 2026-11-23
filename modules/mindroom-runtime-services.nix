@@ -231,15 +231,15 @@ in
       })
 
       {
-        mindroom-cinny-build = {
-          description = "Build MindRoom Web UI (Cinny fork)";
+        mindroom-chat-ui-build = {
+          description = "Build MindRoom Chat Web UI";
           after = [
             "network-online.target"
-            "git-checkout-cinny.service"
+            "git-checkout-mindroom-chat.service"
           ];
           wants = [
             "network-online.target"
-            "git-checkout-cinny.service"
+            "git-checkout-mindroom-chat.service"
           ];
           wantedBy = [ "multi-user.target" ];
           path = with pkgs; [
@@ -250,12 +250,12 @@ in
           ];
           serviceConfig = {
             Type = "oneshot";
-            # Stay "active (exited)" after success so a bumped cinny pin
+            # Stay "active (exited)" after success so a bumped MindRoom Chat pin
             # (via restartTriggers) re-runs the build at switch time.
             RemainAfterExit = true;
             User = cfg.user;
             Group = cfg.group;
-            WorkingDirectory = "/var/www/cinny";
+            WorkingDirectory = "/var/www/mindroom-chat";
             Restart = "on-failure";
             RestartSec = "10s";
           };
@@ -263,7 +263,7 @@ in
             set -euo pipefail
 
             # The build marker lives inside .git/ so it never dirties the
-            # working tree (a dirty tree would stop git-checkout-cinny from
+            # working tree (a dirty tree would stop git-checkout-mindroom-chat from
             # pulling updates).
             current_rev="$(git rev-parse HEAD)"
             marker=.git/mindroom-dist-build-rev
@@ -278,26 +278,26 @@ in
           '';
         };
 
-        mindroom-cinny = {
-          description = "MindRoom Web UI (Cinny fork)";
+        mindroom-chat-ui = {
+          description = "MindRoom Chat Web UI";
           after = [
             "network-online.target"
-            "git-checkout-cinny.service"
-            "mindroom-cinny-build.service"
+            "git-checkout-mindroom-chat.service"
+            "mindroom-chat-ui-build.service"
           ];
           wants = [
             "network-online.target"
-            "git-checkout-cinny.service"
-            "mindroom-cinny-build.service"
+            "git-checkout-mindroom-chat.service"
+            "mindroom-chat-ui-build.service"
           ];
-          requires = [ "mindroom-cinny-build.service" ];
+          requires = [ "mindroom-chat-ui-build.service" ];
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "simple";
             User = cfg.user;
             Group = cfg.group;
-            WorkingDirectory = "/var/www/cinny/dist";
-            ExecStart = "${pkgs.python3}/bin/python3 /var/www/cinny/scripts/serve.py 8090";
+            WorkingDirectory = "/var/www/mindroom-chat/dist";
+            ExecStart = "${pkgs.python3}/bin/python3 /var/www/mindroom-chat/scripts/serve.py 8090";
             Restart = "always";
             RestartSec = "5s";
           };
