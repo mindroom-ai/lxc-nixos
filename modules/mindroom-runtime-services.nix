@@ -150,7 +150,7 @@ in
             bash
             coreutils
             git
-            nodejs_22
+            nodejs_24
           ];
           serviceConfig = {
             Type = "oneshot";
@@ -201,7 +201,7 @@ in
             User = cfg.user;
             Group = cfg.group;
             WorkingDirectory = "/var/www/cinny/dist";
-            ExecStart = "${pkgs.python3}/bin/python3 /var/www/cinny/serve.py 8090";
+            ExecStart = "${pkgs.python3}/bin/python3 /var/www/cinny/scripts/serve.py 8090";
             Restart = "always";
             RestartSec = "5s";
           };
