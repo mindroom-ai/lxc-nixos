@@ -33,23 +33,31 @@ let
         mindroom "$@"
     '';
 
-  # Keep only config.yaml, top-level docs, and agent workspaces in git; exclude
-  # secrets, venvs, databases, logs, caches, and runtime state under mindroom_data/.
+  # Deny by default: track only config.yaml, .gitignore, and agent workspaces,
+  # excluding credentials, secrets, caches, venvs, and runtime artifacts inside workspaces.
   setupGitignoreFile = pkgs.writeText "mindroom-setup-gitignore" ''
-    /mindroom_data/*
+    *
+    !/.gitignore
+    !/config.yaml
+    !/mindroom_data/
     !/mindroom_data/agents/
-    /mindroom_data/agents/*
     !/mindroom_data/agents/*/
-    /mindroom_data/agents/*/*
     !/mindroom_data/agents/*/workspace/
+    !/mindroom_data/agents/*/workspace/**
 
-    .env
-    .env.*
+    .ssh/
+    .config/
+    .npmrc
+    .netrc
+    .git-credentials
+    .env*
     *.age
-    *.key
     *.pem
-
+    *key*
+    id_*
+    credentials*
     .venv/
+    node_modules/
     __pycache__/
     *.pyc
     .cache/
@@ -73,9 +81,9 @@ let
 
       - **Root access:** You run as `${cfg.user}` with passwordless `sudo`, Docker, and Incus access — you have full root inside this container. Use `sudo -n ...` for privileged commands.
       - **Version-controlled setup:** Your MindRoom setup (`config.yaml` and agent workspaces under `mindroom_data/agents/*/workspace/`) is a Git repository at `${dir}`.
-        - After every change you make to `config.yaml`, workspace files, memory, or skills, commit it in `${dir}` with a clear message (e.g. `git -C ${dir} add -A && git -C ${dir} commit -m "..."`).
-        - Never commit secrets (`.env`, `/run/agenix/*`, credentials, keys, or runtime databases — `.gitignore` already excludes them; do not force-add them).
-      - **System flake:** The NixOS flake for this container is mounted from the host at `/mnt/repo`; if you edit it to change the NixOS system, commit your changes in `/mnt/repo` too (never commit plaintext secrets).
+        - After every change you make to `config.yaml`, workspace files, memory, or skills, stage only the specific files you changed (`git -C ${dir} add <paths>`) and commit with a clear message (`git -C ${dir} commit -m "..."`). Never use `git add -A`.
+        - Never commit secrets (`.env*`, `/run/agenix/*`, `.ssh/`, `.config/`, credentials, keys, or runtime databases — `.gitignore` excludes them; do not force-add them).
+      - **System flake:** The NixOS deployment flake belongs to the operator on the host; do not modify or rebuild it from inside the guest.
     '';
 
   mkMindroomRuntime =
@@ -99,37 +107,44 @@ let
         "git-checkout-mindroom.service"
       ];
       wantedBy = [ "multi-user.target" ];
+      path = with pkgs; [
+        coreutils
+        git
+        gnugrep
+      ];
       # First boot: run `mindroom config init` to generate config.yaml (reading
-      # MINDROOM_OWNER_USER_ID from the agenix env), drop config init's starter
-      # .env so agenix stays the single env source, add standing root/git
-      # instructions to the workspace AGENTS.md, and make the state dir a git repo.
+      # MINDROOM_OWNER_USER_ID from the agenix env), remove config init's starter
+      # .env (without deleting any pre-existing operator .env), add standing
+      # root/git instructions to the workspace AGENTS.md, and make the state dir
+      # a git repo.
       preStart = ''
         if [ ! -f "${dir}/config.yaml" ]; then
+          had_env=0
+          [ -e "${dir}/.env" ] && had_env=1
           ${mindroom-uv dir} config init --no-input \
             --matrix-server ${matrixServerPreset} \
             --provider openai \
             --path "${dir}/config.yaml"
-          ${pkgs.coreutils}/bin/rm -f "${dir}/.env"
+          if [ "$had_env" = 0 ]; then
+            rm -f "${dir}/.env"
+          fi
         fi
 
         workspace="${dir}/mindroom_data/agents/mind/workspace"
-        if [ -f "$workspace/AGENTS.md" ] && ! ${pkgs.gnugrep}/bin/grep -qF "<!-- mindroom-nixos:setup -->" "$workspace/AGENTS.md"; then
+        if [ -f "$workspace/AGENTS.md" ] && ! grep -qF "<!-- mindroom-nixos:setup -->" "$workspace/AGENTS.md"; then
           echo "" >> "$workspace/AGENTS.md"
-          ${pkgs.coreutils}/bin/cat "${setupInstructionsFile dir}" >> "$workspace/AGENTS.md"
+          cat "${setupInstructionsFile dir}" >> "$workspace/AGENTS.md"
         fi
 
-        if [ ! -f "${dir}/.gitignore" ]; then
-          ${pkgs.coreutils}/bin/install -m 0644 "${setupGitignoreFile}" "${dir}/.gitignore"
-        fi
-
-        if [ ! -d "${dir}/.git" ]; then
-          ${pkgs.git}/bin/git -C "${dir}" init -b main
-          ${pkgs.git}/bin/git -C "${dir}" config user.name "MindRoom Agent"
-          ${pkgs.git}/bin/git -C "${dir}" config user.email "mindroom@localhost"
-          ${pkgs.git}/bin/git -C "${dir}" add -A
-          if ! ${pkgs.git}/bin/git -C "${dir}" diff --cached --quiet; then
-            ${pkgs.git}/bin/git -C "${dir}" commit -m "Initial MindRoom setup"
+        if ! git -C "${dir}" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+          if [ ! -f "${dir}/.gitignore" ]; then
+            install -m 0644 "${setupGitignoreFile}" "${dir}/.gitignore"
           fi
+          git -C "${dir}" init -b main
+          git -C "${dir}" config user.name "MindRoom Agent"
+          git -C "${dir}" config user.email "mindroom@localhost"
+          git -C "${dir}" add -A
+          git -C "${dir}" commit -m "Initial MindRoom setup"
         fi
       '';
       serviceConfig = {
