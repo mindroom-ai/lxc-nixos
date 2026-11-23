@@ -16,7 +16,7 @@ This README explains what you get and which knobs exist.
 | --- | --- | --- |
 | `tuwunel` | Local Matrix homeserver (MindRoom Tuwunel fork, pinned release binary) | 8008 (loopback) |
 | `caddy` | HTTP reverse proxy / routing for the public hostnames | 80 |
-| `mindroom-cinny` | MindRoom Chat web client (built in-guest on first activation) | 8090 (all interfaces; the firewall only opens 80) |
+| `mindroom-cinny` | MindRoom Chat web client (built in-guest on first activation) | 8090 (all interfaces; not open in the guest firewall) |
 | `mindroom-lab` | MindRoom agent runtime — local homeserver (optional, default on) | 8765 (loopback; unauthenticated dashboard/API, not proxied) |
 | `mindroom-chat` | MindRoom agent runtime — hosted mindroom.chat (optional, default off) | 8766 (loopback; proxied by Caddy when enabled) |
 | `git-checkout-*` | Keep the MindRoom and MindRoom Chat checkouts at the pinned revisions | — |

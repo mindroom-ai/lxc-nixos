@@ -238,7 +238,8 @@ incus exec mindroom -- /run/current-system/sw/bin/journalctl -u tuwunel -n 100 -
 
   YAML requires quotes around a leading `@`.
   After restart, `mindroom-lab` invites `@you:mindroom.lab.mindroom.chat` to the `personal` room.
-  When signing in through MindRoom Chat (which defaults to hosted `mindroom.chat`), switch to/enter the lab homeserver (`https://mindroom.lab.mindroom.chat` behind your TLS proxy, or your local forwarded URL) before logging in.
+  When signing in through MindRoom Chat (which defaults to hosted `mindroom.chat`), enter the lab homeserver `https://mindroom.lab.mindroom.chat` (served through your TLS proxy) before logging in.
+  The raw forwarded `http://127.0.0.1:8080` is not a homeserver URL: Caddy routes by hostname.
 - TLS: nothing in this container terminates TLS.
   Put a TLS-terminating reverse proxy in front (see README), or edit `hosts/mindroom/caddy.nix`.
 
