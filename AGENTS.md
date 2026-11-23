@@ -11,7 +11,7 @@ For background on what the deployed system contains, read [README.md](README.md)
   The Incus daemon is Linux-only.
 - Shell access to that host.
 - An SSH public key for the operator.
-- `nix` available somewhere for secret bootstrapping: the Incus host, a workstation, or the container itself.
+- `nix` on a Linux machine for secret bootstrapping (the Incus host, a Linux workstation, or the container itself); the bootstrap script stages plaintext only on tmpfs, which macOS lacks.
 
 ## 1. Install Incus on the Host (skip if present)
 

@@ -88,7 +88,7 @@ let
       ## Guest Environment and Version Control
 
       - **Root access:** You run as `${cfg.user}` with passwordless `sudo`, Docker, and Incus access — you have full root inside this container. Use `sudo -n ...` for privileged commands.
-      - **Version-controlled setup:** Your MindRoom setup (`config.yaml` and agent workspaces under `mindroom_data/agents/*/workspace/`) is version-controlled under `${dir}` (a workspace may also have its own nested Git repo).
+      - **Version-controlled setup:** Your MindRoom setup (`config.yaml` and agent workspaces under `mindroom_data/agents/*/workspace/`) is version-controlled under `${dir}`. If `git -C ${dir} log` is empty (an upgraded deployment), review `git status` first and make the initial commit yourself, staging only setup files without secrets. A workspace may also have its own nested Git repo.
         - After every change you make to `config.yaml`, workspace files, memory, or skills, commit it in the repo that owns the file (`repo=$(git -C "$(dirname <file>)" rev-parse --show-toplevel)`), staging only the specific files you changed (`git -C "$repo" add -- <paths> && git -C "$repo" commit -m "..."`). Never use `git add -A`.
         - Never commit secrets (`.env*`, `/run/agenix/*`, `.ssh/`, `.config/`, `.docker/`, `.kube/`, `.codex/`, `.aws/`, `.gnupg/`, credentials, keys, or runtime databases — `.gitignore` excludes them; do not force-add them).
       - **System flake:** The NixOS deployment flake belongs to the operator on the host; do not modify or rebuild it from inside the guest.
@@ -124,9 +124,11 @@ let
       # MINDROOM_OWNER_USER_ID from the agenix env), remove config init's starter
       # .env (without deleting any pre-existing operator .env), add standing
       # root/git instructions to the workspace AGENTS.md, and make the state dir
-      # a git repo.
+      # a git repo (committing only a freshly generated setup).
       preStart = ''
+        fresh_init=0
         if [ ! -f "${dir}/config.yaml" ]; then
+          fresh_init=1
           had_env=0
           [ -e "${dir}/.env" ] && had_env=1
           ${mindroom-uv dir} config init --no-input \
@@ -144,39 +146,17 @@ let
           cat "${setupInstructionsFile dir}" >> "$workspace/AGENTS.md"
         fi
 
-        if ! git -C "${dir}" rev-parse -q --verify HEAD >/dev/null 2>&1; then
-          created_gitignore=0
-          if [ ! -f "${dir}/.gitignore" ]; then
-            install -m 0644 "${setupGitignoreFile}" "${dir}/.gitignore"
-            created_gitignore=1
-          fi
+        if [ ! -d "${dir}/.git" ]; then
+          [ -f "${dir}/.gitignore" ] || install -m 0644 "${setupGitignoreFile}" "${dir}/.gitignore"
           git -C "${dir}" init -b main
           git -C "${dir}" config user.name "MindRoom Agent"
           git -C "${dir}" config user.email "mindroom@localhost"
-
-          files=()
-          for f in .gitignore config.yaml; do
-            [ -f "${dir}/$f" ] && ! git -C "${dir}" check-ignore -q -- "$f" && files+=("$f")
-          done
-          for ws in "${dir}"/mindroom_data/agents/*/workspace; do
-            [ -d "$ws" ] || continue
-            rel_ws="''${ws#${dir}/}"
-            if [ -e "$ws/.git" ]; then
-              mkdir -p "${dir}/.git/info"
-              grep -qxF "/$rel_ws/" "${dir}/.git/info/exclude" 2>/dev/null \
-                || printf '/%s/\n' "$rel_ws" >> "${dir}/.git/info/exclude"
-              if [ "$created_gitignore" = 1 ]; then
-                grep -qxF "/$rel_ws/" "${dir}/.gitignore" 2>/dev/null \
-                  || printf '/%s/\n' "$rel_ws" >> "${dir}/.gitignore"
-              fi
-              continue
-            fi
-            for f in SOUL.md AGENTS.md USER.md IDENTITY.md TOOLS.md HEARTBEAT.md MEMORY.md; do
-              [ -f "$ws/$f" ] && ! git -C "${dir}" check-ignore -q -- "$rel_ws/$f" && files+=("$rel_ws/$f")
-            done
-          done
-          if [ "''${#files[@]}" -gt 0 ]; then
-            git -C "${dir}" add -- "''${files[@]}"
+          # Only commit what config init just generated. An existing state dir
+          # (upgrade) is left unstaged for the operator or agent to review, since
+          # an older config.yaml may hold literal keys.
+          if [ "$fresh_init" = 1 ]; then
+            git -C "${dir}" add -- .gitignore config.yaml
+            [ -d "${dir}/mindroom_data/agents" ] && git -C "${dir}" add -- mindroom_data/agents
             git -C "${dir}" commit -m "Initial MindRoom setup"
           fi
         fi
