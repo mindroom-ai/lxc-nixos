@@ -28,9 +28,9 @@ The guest also ships Docker, Incus, distrobox, and a CLI/dev toolbox for the ope
 Both targets share [hosts/mindroom/default.nix](hosts/mindroom/default.nix) and run the exact same service stack:
 
 - **Incus LXC (`nixosConfigurations.mindroom`)**: deploys into an `images:nixos/unstable` Incus container with [modules/lxc-container.nix](modules/lxc-container.nix).
-- **QEMU MicroVM (`nixosConfigurations.mindroom-microvm`)**: boots directly on any `x86_64-linux` host with `/dev/kvm` via a single command (`nix run /path/to/repo#mindroom-microvm` from a private `0700` state directory outside the checkout), configured in [modules/microvm-guest.nix](modules/microvm-guest.nix):
+- **QEMU MicroVM (`nixosConfigurations.mindroom-microvm`)**: boots directly on any `x86_64-linux` host with `/dev/kvm` from a private `0700` state directory outside the checkout (`nix build --out-link runner /path/to/repo#mindroom-microvm && ./runner/bin/microvm-run`, keeping a GC root for the live host store paths), configured in [modules/microvm-guest.nix](modules/microvm-guest.nix):
   - 4 vCPU, 8 GiB RAM (sized for the first-boot MindRoom Chat Vite build and `uv` installs alongside the tmpfs root).
-  - Shares the host `/nix/store` read-only over 9p with a persistent writable overlay (`nix-store.img`, 8 GiB sparse ext4) so `nix shell` / `nix develop` work inside the guest without a separate `virtiofsd` daemon.
+  - Shares the host `/nix/store` read-only over 9p with a persistent writable overlay and Nix DB (`nix-store.img`, 8 GiB sparse ext4, persisting `/nix/.rw-store` and `/nix/var/nix`) so `nix shell` / `nix develop` work inside the guest and guest-added store paths stay registered across reboots.
   - Persists `/var` (20 GiB sparse ext4: Tuwunel DB, MindRoom state/venvs, MindRoom Chat checkout/build, journals, Docker/Incus) and `/srv` (4 GiB sparse ext4: MindRoom source checkout) as `0600` images in the private state directory, with a pinned `microvm.machineId` so journals survive reboots.
   - Mounts a pre-generated SSH host key from `ssh/` in that private state directory read-only with `neededForBoot = true`, so `agenix` decrypts secrets on first boot and `sshd` keeps a stable host identity across reboots (without putting key material inside the git checkout).
   - Uses QEMU user networking forwarding `127.0.0.1:8080 -> 80` (Caddy) and `127.0.0.1:2222 -> 22` (SSH).
@@ -100,11 +100,11 @@ Verified end-to-end on 2026-11-22 by booting a fresh `mindroom-microvm` QEMU gue
 
 - `nix flake check` (eval-only for both `#mindroom` and `#mindroom-microvm`), `nixfmt --check`, and `shellcheck`
 - pre-boot host key generation in a `0700` state directory outside the checkout, `0600` disk image creation via runner `umask 077`, non-interactive secret bootstrap via `nix shell .#ragenix -c ./scripts/bootstrap-secrets.sh --non-interactive --values-dir ...` with a live `OPENAI_API_KEY`, and agenix decryption on first boot
-- `nix run /path/to/repo#mindroom-microvm` first boot (~2m total for checkouts, MindRoom Chat UI build, and `mindroom-lab` `uv` install) settling with `systemctl --failed` empty and `tuwunel`, `caddy`, `mindroom-cinny`, `mindroom-lab`, `docker`, `incus` active
-- writable `/nix/store` overlay: `nix shell nixpkgs#hello -c hello` as `mindroom` succeeding both before and after reboot
+- `nix build --out-link runner "$REPO#mindroom-microvm" && ./runner/bin/microvm-run` first boot (~2m total for checkouts, MindRoom Chat UI build, and `mindroom-lab` `uv` install) settling with `systemctl --failed` empty and `tuwunel`, `caddy`, `mindroom-cinny`, `mindroom-lab`, `docker`, `incus` active
+- writable `/nix/store` overlay + persisted `/nix/var/nix` DB: `nix build --no-link --print-out-paths nixpkgs#hello` on boot 1 and `nix path-info --offline <path>` after reboot succeeding as `mindroom`
 - host access over the forwarded HTTP port to both the Matrix client API (`Host: mindroom.lab.mindroom.chat`) and the MindRoom Chat web UI (`Host: chat.lab.mindroom.chat`, HTTP 200)
 - `mindroom-lab` registering `@mindroom_user`, `@mindroom_router`, and `@mindroom_mind` on local Tuwunel; registering a local test user with the bootstrap token, replacing the pairing placeholder in `/var/lib/mindroom/lab/config.yaml`, and receiving an actual LLM reply from `@mindroom_mind`
-- clean shutdown (`microvm-shutdown`) and reboot persistence: SSH host key, checkouts, built UI (no rebuild on second boot), Tuwunel database/accounts, room history, and multi-boot persistent journal (`journalctl --list-boots` showing 2 boots) survived intact
+- clean shutdown (`./runner/bin/microvm-shutdown`) and reboot persistence: SSH host key, checkouts, built UI (no rebuild on second boot), Tuwunel database/accounts, room history, and multi-boot persistent journal (`journalctl --list-boots` showing 2 boots) survived intact
 
 Not verified for the microVM: the `chat` runtime against hosted `mindroom.chat` and an external TLS-terminating reverse proxy.
 

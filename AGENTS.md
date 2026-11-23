@@ -209,24 +209,33 @@ incus exec mindroom -- /run/current-system/sw/bin/journalctl -u tuwunel -n 100 -
 - On the site domain only `/_matrix/*` and the well-known endpoints exist; other paths return 404 unless the chat runtime (which serves the app backend) is enabled.
 - `mindroom-lab` registers its agents on the local homeserver using the registration token; agents need at least one real LLM provider key in `agent-integrations.env.age` to answer.
 - `mindroom-lab` logs startup warnings about `__MINDROOM_OWNER_USER_ID_FROM_PAIRING__`; that placeholder is only filled by the hosted pairing flow.
-  To register a local user and chat with `@mindroom_mind` in lab mode, run inside the guest (over SSH or `incus exec mindroom -- sudo -u mindroom bash`):
+  To register a local user and chat with `@mindroom_mind` in lab mode, run inside the guest (over SSH or `incus exec mindroom -- /run/wrappers/bin/sudo -iu mindroom bash`):
 
   ```bash
+  USER_LOCALPART="you"
+  PASSWORD=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
   TOKEN=$(sudo cat /run/agenix/registration-token)
-  SESSION=$(curl -s -X POST http://127.0.0.1:8008/_matrix/client/v3/register \
+  SESSION=$(curl -sS -X POST http://127.0.0.1:8008/_matrix/client/v3/register \
     -H 'Content-Type: application/json' \
-    -d '{"username":"you","password":"change-me-now"}' | jq -r .session)
-  jq -n --arg s "$SESSION" --arg t "$TOKEN" \
-    '{username:"you",password:"change-me-now",auth:{type:"m.login.registration_token",token:$t,session:$s}}' | \
-    curl -s -X POST http://127.0.0.1:8008/_matrix/client/v3/register -H 'Content-Type: application/json' -d @- | \
-    jq '{user_id, device_id}'
+    -d "$(jq -cn --arg u "$USER_LOCALPART" --arg p "$PASSWORD" '{username:$u,password:$p}')" | jq -r .session)
+  USER_ID=$(jq -cn --arg u "$USER_LOCALPART" --arg p "$PASSWORD" --arg s "$SESSION" --arg t "$TOKEN" \
+    '{username:$u,password:$p,auth:{type:"m.login.registration_token",token:$t,session:$s}}' | \
+    curl -sS -X POST http://127.0.0.1:8008/_matrix/client/v3/register -H 'Content-Type: application/json' -d @- | \
+    jq -r '.user_id // empty')
   unset TOKEN
-  sed -i 's/__MINDROOM_OWNER_USER_ID_FROM_PAIRING__/"@you:mindroom.lab.mindroom.chat"/g' /var/lib/mindroom/lab/config.yaml
+  EXPECTED_ID="@${USER_LOCALPART}:mindroom.lab.mindroom.chat"
+  if [ "$USER_ID" != "$EXPECTED_ID" ]; then
+    echo "Registration failed (got '${USER_ID:-<empty>}')" >&2
+    exit 1
+  fi
+  printf 'Registered %s with password: %s\n' "$USER_ID" "$PASSWORD"
+  unset PASSWORD
+  sed -i "s|__MINDROOM_OWNER_USER_ID_FROM_PAIRING__|\"$USER_ID\"|g" /var/lib/mindroom/lab/config.yaml
   sudo systemctl restart mindroom-lab
   ```
 
   YAML requires quotes around a leading `@`.
-  After restart, `mindroom-lab` invites `@you:mindroom.lab.mindroom.chat` to the `personal` room.
+  After restart, `mindroom-lab` invites `$EXPECTED_ID` to the `personal` room.
 - TLS: nothing in this container terminates TLS.
   Put a TLS-terminating reverse proxy in front (see README), or edit `hosts/mindroom/caddy.nix`.
 
@@ -272,11 +281,16 @@ The VM forwards host loopback `127.0.0.1:8080 -> 80` (Caddy) and `127.0.0.1:2222
 
 ### M2. Generate the Guest SSH Host Key in a Private State Dir (Before First Boot)
 
-Keep VM state **outside** the git checkout (a `path:` flake ref copies untracked files inside a repo into the world-readable `/nix/store`):
+Keep VM state **outside** any git work tree (a `path:` flake ref copies untracked files inside a repo into the world-readable `/nix/store`):
 
 ```bash
 STATE_DIR=~/.local/state/mindroom-microvm
-install -d -m 700 "$STATE_DIR" "$STATE_DIR/ssh"
+install -d -m 700 "$STATE_DIR"
+if [ "$(git -C "$STATE_DIR" rev-parse --is-inside-work-tree 2>/dev/null || true)" = "true" ]; then
+  echo "Refusing to place VM state inside a git work tree: $STATE_DIR" >&2
+  exit 1
+fi
+install -d -m 700 "$STATE_DIR/ssh"
 ssh-keygen -q -t ed25519 -N "" -C "root@mindroom" -f "$STATE_DIR/ssh/ssh_host_ed25519_key"
 cat "$STATE_DIR/ssh/ssh_host_ed25519_key.pub"
 ```
@@ -297,13 +311,15 @@ nix flake check
 
 Expect `all checks passed!` (eval-only for both `#mindroom` and `#mindroom-microvm`).
 
-### M5. Start the MicroVM
+### M5. Build and Start the MicroVM
 
-Run from `$STATE_DIR` using the repo's absolute path (the runner enforces `0700` on `$STATE_DIR` and `umask 077`, creating `0600` sparse ext4 images `var.img`, `srv.img`, and `nix-store.img` plus `control.sock` there, and refuses to start inside a git checkout):
+Run from `$STATE_DIR` using the repo's absolute path.
+Building with `--out-link runner` keeps a host Nix GC root for the store paths the guest runs over 9p; `microvm-run` enforces `0700` on `$STATE_DIR` and `umask 077`, creating `0600` sparse ext4 images `var.img`, `srv.img`, and `nix-store.img` plus `control.sock` there, and refuses to start inside a git work tree:
 
 ```bash
 cd "$STATE_DIR"
-nix run "$REPO#mindroom-microvm"
+nix build --out-link runner "$REPO#mindroom-microvm"
+./runner/bin/microvm-run
 ```
 
 The runner starts QEMU in the foreground with the serial console attached (run inside `tmux` or another terminal to detach).
@@ -311,16 +327,18 @@ SSH comes up in ~30–40 seconds; first-boot git checkouts, the MindRoom Chat we
 
 ### M6. Verify from the Host
 
-From another terminal on the host (adjust `2222`/`8080` if you changed `forwardPorts`):
+From another terminal on the host (adjust `STATE_DIR` or `2222`/`8080` if you changed them):
 
 ```bash
-# Pin the pre-generated guest host key in known_hosts (works without a TTY)
+STATE_DIR=~/.local/state/mindroom-microvm
 install -d -m 700 ~/.ssh
-line="[127.0.0.1]:2222 $(cat ~/.local/state/mindroom-microvm/ssh/ssh_host_ed25519_key.pub)"
+line="[127.0.0.1]:2222 $(cat "$STATE_DIR/ssh/ssh_host_ed25519_key.pub")"
 grep -qxF "$line" ~/.ssh/known_hosts 2>/dev/null || echo "$line" >> ~/.ssh/known_hosts
 
-# Wait for SSH and first-boot services (checkouts + UI build + mindroom-lab uv install)
-timeout 600 bash -c 'until ssh -o BatchMode=yes -p 2222 mindroom@127.0.0.1 "systemctl is-active -q mindroom-cinny mindroom-lab" 2>/dev/null; do sleep 10; done'
+# Wait for SSH and all first-boot services (checkouts + UI build + mindroom-lab uv install)
+timeout 600 bash -c 'until ssh -n -o BatchMode=yes -p 2222 mindroom@127.0.0.1 \
+  "systemctl is-active -q tuwunel && systemctl is-active -q caddy && systemctl is-active -q mindroom-cinny && systemctl is-active -q mindroom-lab" 2>/dev/null \
+  && curl -sf -H "Host: chat.lab.mindroom.chat" http://127.0.0.1:8080/ >/dev/null; do sleep 10; done'
 
 ssh -o BatchMode=yes -p 2222 mindroom@127.0.0.1 'systemctl --failed --no-pager && systemctl is-active tuwunel caddy mindroom-cinny mindroom-lab'
 curl -s -H 'Host: mindroom.lab.mindroom.chat' http://127.0.0.1:8080/_matrix/client/versions | head -c 200
@@ -331,13 +349,26 @@ Expect `0 loaded units listed.`, four `active` lines, Matrix version JSON, and `
 
 ### Stopping, Rebooting, and Updating the MicroVM
 
-Stop cleanly so the ext4 volumes unmount cleanly:
+Stop cleanly so the ext4 volumes unmount cleanly (set `STATE_DIR` in a new terminal):
 
 ```bash
+STATE_DIR=~/.local/state/mindroom-microvm
+cd "$STATE_DIR"
+./runner/bin/microvm-shutdown
+# Or via SSH:
 ssh -o BatchMode=yes -p 2222 mindroom@127.0.0.1 'sudo poweroff'
-# Or from $STATE_DIR on the host via the QMP socket:
-cd "$STATE_DIR" && "$(nix build --no-link --print-out-paths "$REPO#mindroom-microvm")/bin/microvm-shutdown"
 ```
 
-Re-running `nix run "$REPO#mindroom-microvm"` from `$STATE_DIR` reuses `var.img`, `srv.img`, and `nix-store.img` (checkouts, built UI, Tuwunel DB, agent accounts, and multi-boot journals survive without rebuilding the UI).
-To apply updates: `git -C "$REPO" pull`, stop the VM, and re-run `nix run "$REPO#mindroom-microvm"` from `$STATE_DIR`.
+Re-running `./runner/bin/microvm-run` from `$STATE_DIR` reuses `var.img`, `srv.img`, and `nix-store.img` (checkouts, built UI, Tuwunel DB, agent accounts, guest-installed Nix store paths, and multi-boot journals survive without rebuilding the UI).
+
+To apply updates:
+
+```bash
+REPO=/abs/path/to/lxc-nixos
+STATE_DIR=~/.local/state/mindroom-microvm
+git -C "$REPO" pull
+cd "$STATE_DIR"
+./runner/bin/microvm-shutdown
+nix build --out-link runner "$REPO#mindroom-microvm"
+./runner/bin/microvm-run
+```
