@@ -1,6 +1,6 @@
 # Deployment Runbook
 
-This file is the canonical, machine-followable path for deploying MindRoom as either a fresh Incus LXC container (`#mindroom`, steps 1–10 below) or a standalone QEMU microVM (`#mindroom-microvm`, see [MicroVM Deployment](#microvm-deployment)).
+This file is the canonical, machine-followable path for deploying the `mindroom` NixOS configuration into a fresh Incus container.
 Follow the steps in order; each step lists the exact command and what success looks like.
 
 For background on what the deployed system contains, read [README.md](README.md).
@@ -83,7 +83,7 @@ The repo ships empty recipient arrays and placeholder `.age` files; the bootstra
 ## 7. Bootstrap the Secrets
 
 Run from the repo root, on any machine with Nix (`.#ragenix` uses the repo-pinned ragenix, which avoids version mismatches).
-On a stock Nix install without flakes enabled in `nix.conf`, run `export NIX_CONFIG='extra-experimental-features = nix-command flakes'` first (a flag on the outer `nix shell` does not reach the inner `nix eval` calls in `scripts/bootstrap-secrets.sh`).
+The `nix shell` command needs flakes enabled; on a stock Nix install add `--extra-experimental-features 'nix-command flakes'` after `nix`.
 If you run this on a machine other than the Incus host, copy the results back into the clone mounted at `/mnt/repo` before deploying: the generated `.age` files AND both edited `secrets.nix` files.
 
 **Non-interactive (recommended for agents and automation):**
@@ -135,6 +135,7 @@ Rules that matter:
   The bootstrap script keeps them in sync automatically; only if you edit these secrets by hand do you need to keep them identical yourself.
 - The lab template's `MATRIX_HOMESERVER=http://127.0.0.1:8008` and `MATRIX_SERVER_NAME=mindroom.lab.mindroom.chat` defaults are correct for an unmodified deployment; keep them.
 - Only bootstrap `chat-runtime.env.age` when you enabled the chat runtime: `./scripts/bootstrap-secrets.sh --with-chat`.
+- Upgrading an older deployment: its `lab-runtime.env.age` / `chat-runtime.env.age` may still contain empty lines such as `OPENAI_API_KEY=`, which override the shared keys from `agent-integrations.env.age`; re-edit those secrets and delete the empty lines.
 - Re-editing an existing secret interactively requires the operator private key.
   ragenix finds keys in the default SSH paths; otherwise pass `--identity /path/to/key`.
   Non-interactive runs never re-encrypt existing secrets.
@@ -208,38 +209,7 @@ incus exec mindroom -- /run/current-system/sw/bin/journalctl -u tuwunel -n 100 -
 - `tuwunel`, `caddy`, and the MindRoom Chat web UI work with no external services.
 - On the site domain only `/_matrix/*` and the well-known endpoints exist; other paths return 404 unless the chat runtime (which serves the app backend) is enabled.
 - `mindroom-lab` registers its agents on the local homeserver using the registration token; agents need at least one real LLM provider key in `agent-integrations.env.age` to answer.
-- `mindroom-lab` logs startup warnings about `__MINDROOM_OWNER_USER_ID_FROM_PAIRING__`; that placeholder is only filled by the hosted pairing flow.
-  To register a local user and chat with `@mindroom_mind` in lab mode, run inside the guest (over SSH or `incus exec mindroom -- /run/wrappers/bin/sudo -iu mindroom bash`):
-
-  ```bash
-  (
-    USER_LOCALPART="you"
-    PASSWORD=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
-    TOKEN=$(sudo cat /run/agenix/registration-token)
-    SESSION=$(curl -sS -X POST http://127.0.0.1:8008/_matrix/client/v3/register \
-      -H 'Content-Type: application/json' \
-      -d "$(jq -cn --arg u "$USER_LOCALPART" --arg p "$PASSWORD" '{username:$u,password:$p}')" | jq -r .session)
-    USER_ID=$(jq -cn --arg u "$USER_LOCALPART" --arg p "$PASSWORD" --arg s "$SESSION" --arg t "$TOKEN" \
-      '{username:$u,password:$p,auth:{type:"m.login.registration_token",token:$t,session:$s}}' | \
-      curl -sS -X POST http://127.0.0.1:8008/_matrix/client/v3/register -H 'Content-Type: application/json' -d @- | \
-      jq -r '.user_id // empty')
-    unset TOKEN
-    EXPECTED_ID="@${USER_LOCALPART}:mindroom.lab.mindroom.chat"
-    if [ "$USER_ID" != "$EXPECTED_ID" ]; then
-      echo "Registration failed (got '${USER_ID:-<empty>}')" >&2
-      exit 1
-    fi
-    printf 'Registered %s with password: %s\n' "$USER_ID" "$PASSWORD"
-    unset PASSWORD
-    sed -i "s|__MINDROOM_OWNER_USER_ID_FROM_PAIRING__|\"$USER_ID\"|g" /var/lib/mindroom/lab/config.yaml
-    sudo systemctl restart mindroom-lab
-  )
-  ```
-
-  YAML requires quotes around a leading `@`.
-  After restart, `mindroom-lab` invites `@you:mindroom.lab.mindroom.chat` to the `personal` room.
-  When signing in through MindRoom Chat (which defaults to hosted `mindroom.chat`), enter the lab homeserver `https://mindroom.lab.mindroom.chat` (served through your TLS proxy) before logging in.
-  The raw forwarded `http://127.0.0.1:8080` is not a homeserver URL: Caddy routes by hostname.
+- `mindroom-lab` logs startup warnings about `__MINDROOM_OWNER_USER_ID_FROM_PAIRING__`; that placeholder is only filled by the hosted pairing flow and is harmless in lab mode.
 - TLS: nothing in this container terminates TLS.
   Put a TLS-terminating reverse proxy in front (see README), or edit `hosts/mindroom/caddy.nix`.
 
@@ -252,12 +222,6 @@ To apply updates to a running container: update the repo clone (`git pull`), the
 The switch moves the checkouts to the new pins and restarts the affected services; a MindRoom Chat pin bump rebuilds the web UI during the switch, which takes a few extra minutes.
 Checkouts with local (uncommitted) changes are never touched by updates.
 
-Upgrade notes for existing deployments:
-
-- Existing `lab-runtime.env.age` / `chat-runtime.env.age` secrets created from older templates still contain empty `OPENAI_API_KEY=` (etc.) lines that overwrite values from `agent-integrations.env.age`; re-edit them with `ragenix` to remove or comment out unused overrides.
-- A MindRoom Chat checkout (`/var/www/cinny`) with local edits stays at its old commit (the earlier Cinny-based `dev` client with root `serve.py`), so commit or discard those edits before switching.
-- If upgrading an existing microVM whose `nix-store.img` was labeled `nix-store`, relabel it while stopped: `e2label "$STATE_DIR/nix-store.img" mindroom-rw`.
-
 ## Recovery
 
 If a checkout or build service fails transiently (network, OOM), rerun it:
@@ -265,117 +229,4 @@ If a checkout or build service fails transiently (network, OOM), rerun it:
 ```bash
 incus exec mindroom -- /run/current-system/sw/bin/systemctl restart \
   git-checkout-cinny.service mindroom-cinny-build.service mindroom-cinny.service
-```
-
-## MicroVM Deployment
-
-Run the same MindRoom stack directly on a Linux host as a standalone QEMU microVM via `microvm.nix` — no Incus required.
-
-### Preconditions
-
-- An `x86_64-linux` host with `/dev/kvm` readable and writable by your user (`[ -r /dev/kvm ] && [ -w /dev/kvm ]`; otherwise QEMU silently falls back to software TCG emulation).
-- `ssh-keygen` and `nix` (on stock Nix without flakes in `nix.conf`, run `export NIX_CONFIG='extra-experimental-features = nix-command flakes'` first).
-- At least 8 GiB free RAM (for the first-boot MindRoom Chat build and `uv` installs) and an operator SSH public key.
-- **Host isolation note:** QEMU user (SLIRP) networking allows the guest to reach host `127.0.0.1` loopback services via `10.0.2.2`, and the 9p `ro-store` share exposes the entire host `/nix/store`.
-  Run this default configuration only on a host without sensitive loopback-only services or secrets in `/nix/store` (for stronger isolation, switch to `microvm.storeOnDisk = true` and `tap` networking in [modules/microvm-guest.nix](modules/microvm-guest.nix)).
-
-### M1. Clone and Configure the Host
-
-Follow steps 2 and 4 above (`git clone`, add your SSH public key in `hosts/mindroom/default.nix`) and note the repo's absolute path (`REPO=$PWD`).
-The VM forwards host loopback `127.0.0.1:8080 -> 80` (Caddy) and `127.0.0.1:2222 -> 22` (SSH); if either host port is already in use, edit `microvm.forwardPorts` in [modules/microvm-guest.nix](modules/microvm-guest.nix).
-
-### M2. Generate the Guest SSH Host Key in a Private State Dir (Before First Boot)
-
-Keep VM state **outside** any git work tree (a `path:` flake ref copies untracked files inside a repo into the world-readable `/nix/store`):
-
-```bash
-STATE_DIR=~/.local/state/mindroom-microvm
-(
-  install -d -m 700 "$STATE_DIR"
-  if [ "$(git -C "$STATE_DIR" rev-parse --is-inside-work-tree 2>/dev/null || true)" = "true" ]; then
-    echo "Refusing to place VM state inside a git work tree: $STATE_DIR" >&2
-    exit 1
-  fi
-  install -d -m 700 "$STATE_DIR/ssh"
-  ssh-keygen -q -t ed25519 -N "" -C "root@mindroom" -f "$STATE_DIR/ssh/ssh_host_ed25519_key"
-  cat "$STATE_DIR/ssh/ssh_host_ed25519_key.pub"
-)
-```
-
-The runner mounts `$STATE_DIR/ssh` read-only early in boot (`neededForBoot = true`), so `agenix` decrypts secrets on first boot and `sshd` keeps a stable host identity across reboots.
-
-### M3. Configure Recipients and Bootstrap Secrets
-
-From the repo root (`$REPO`), follow steps 6 and 7 above, using the `$STATE_DIR/ssh/ssh_host_ed25519_key.pub` line from step M2 as the host recipient.
-
-### M4. Preflight Check
-
-From the repo root (`$REPO`):
-
-```bash
-nix flake check
-```
-
-Expect `all checks passed!` (eval-only for both `#mindroom` and `#mindroom-microvm`).
-
-### M5. Build and Start the MicroVM
-
-Run from `$STATE_DIR` using the repo's absolute path.
-Building with `--out-link runner` keeps a host Nix GC root for the store paths the guest runs over 9p; `microvm-run` enforces `0700` on `$STATE_DIR` and `umask 077`, creating `0600` sparse ext4 images `var.img`, `srv.img`, and `nix-store.img` plus `control.sock` there, and refuses to start inside a git work tree:
-
-```bash
-cd "$STATE_DIR"
-nix build --out-link runner "$REPO#mindroom-microvm"
-./runner/bin/microvm-run
-```
-
-The runner starts QEMU in the foreground with the serial console attached (run inside `tmux` or another terminal to detach).
-SSH comes up in ~30–40 seconds; first-boot git checkouts, the MindRoom Chat web UI build, and `mindroom-lab` `uv` install take ~2 minutes on a fast connection.
-
-### M6. Verify from the Host
-
-From another terminal on the host (adjust `STATE_DIR`, `2222`/`8080` if you changed `forwardPorts`, and drop `mindroom-lab` or add `mindroom-chat` in both the wait loop and status check to match your runtime toggles):
-
-```bash
-STATE_DIR=~/.local/state/mindroom-microvm
-install -d -m 700 ~/.ssh
-line="[127.0.0.1]:2222 $(cat "$STATE_DIR/ssh/ssh_host_ed25519_key.pub")"
-grep -qxF "$line" ~/.ssh/known_hosts 2>/dev/null || echo "$line" >> ~/.ssh/known_hosts
-
-# Wait for SSH and all first-boot services (checkouts + UI build + mindroom-lab uv install)
-timeout 600 bash -c 'until ssh -n -o BatchMode=yes -p 2222 mindroom@127.0.0.1 \
-  "systemctl is-active -q tuwunel && systemctl is-active -q caddy && systemctl is-active -q mindroom-cinny && systemctl is-active -q mindroom-lab" 2>/dev/null \
-  && curl -sf -H "Host: chat.lab.mindroom.chat" http://127.0.0.1:8080/ >/dev/null; do sleep 10; done'
-
-ssh -o BatchMode=yes -p 2222 mindroom@127.0.0.1 'systemctl --failed --no-pager && systemctl is-active tuwunel caddy mindroom-cinny mindroom-lab'
-curl -s -H 'Host: mindroom.lab.mindroom.chat' http://127.0.0.1:8080/_matrix/client/versions | head -c 200
-curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: chat.lab.mindroom.chat' http://127.0.0.1:8080/
-```
-
-Expect `0 loaded units listed.`, four `active` lines, Matrix version JSON, and `200`.
-
-### Stopping, Rebooting, and Updating the MicroVM
-
-Stop cleanly so the ext4 volumes unmount cleanly (set `STATE_DIR` in a new terminal):
-
-```bash
-STATE_DIR=~/.local/state/mindroom-microvm
-cd "$STATE_DIR"
-./runner/bin/microvm-shutdown
-# Or via SSH:
-ssh -o BatchMode=yes -p 2222 mindroom@127.0.0.1 'sudo poweroff'
-```
-
-Re-running `./runner/bin/microvm-run` from `$STATE_DIR` reuses `var.img`, `srv.img`, and `nix-store.img` (checkouts, built UI, Tuwunel DB, agent accounts, guest-installed Nix store paths, and multi-boot journals survive without rebuilding the UI).
-
-To apply updates:
-
-```bash
-REPO=/abs/path/to/lxc-nixos
-STATE_DIR=~/.local/state/mindroom-microvm
-git -C "$REPO" pull
-cd "$STATE_DIR"
-./runner/bin/microvm-shutdown
-nix build --out-link runner "$REPO#mindroom-microvm"
-./runner/bin/microvm-run
 ```

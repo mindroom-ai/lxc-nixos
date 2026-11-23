@@ -1,14 +1,10 @@
 {
-  description = "Standalone NixOS configuration for MindRoom (Incus LXC and microVM)";
+  description = "Standalone NixOS configuration for the MindRoom Incus LXC";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     ragenix = {
       url = "github:yaxitech/ragenix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    microvm = {
-      url = "github:microvm-nix/microvm.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -18,59 +14,33 @@
       self,
       nixpkgs,
       ragenix,
-      microvm,
       ...
     }:
     let
       inherit (nixpkgs) lib;
       system = "x86_64-linux";
-      commonModules = [
-        ragenix.nixosModules.default
-        ./hosts/mindroom/default.nix
-      ];
+      commonModules = [ ragenix.nixosModules.default ];
     in
     {
-      nixosConfigurations = {
-        mindroom = lib.nixosSystem {
-          inherit system;
-          modules = commonModules ++ [ ./modules/lxc-container.nix ];
-        };
-
-        mindroom-microvm = lib.nixosSystem {
-          inherit system;
-          modules = commonModules ++ [
-            microvm.nixosModules.microvm
-            ./modules/microvm-guest.nix
-          ];
-        };
+      nixosConfigurations.mindroom = lib.nixosSystem {
+        inherit system;
+        modules = commonModules ++ [ ./hosts/mindroom/default.nix ];
       };
 
-      packages.${system} = {
-        # The pinned ragenix CLI, used by scripts/bootstrap-secrets.sh.
-        ragenix = ragenix.packages.${system}.default;
-        # QEMU microVM runner (build with `--out-link runner` from a private state dir; see AGENTS.md).
-        mindroom-microvm = self.nixosConfigurations.mindroom-microvm.config.microvm.declaredRunner;
-      };
+      # The pinned ragenix CLI, used by scripts/bootstrap-secrets.sh.
+      packages.${system}.ragenix = ragenix.packages.${system}.default;
 
-      # Eval-only checks: `nix flake check` instantiates both targets (catching
-      # every Nix-level error) without building their multi-GB closures.
-      # unsafeDiscardOutputDependency keeps the .drv reference from pulling in
-      # build outputs.
-      checks.${system} =
+      # Eval-only check: `nix flake check` instantiates the full system
+      # (catching every Nix-level error) without building the multi-GB
+      # closure. unsafeDiscardOutputDependency keeps the .drv reference from
+      # pulling in the system's build outputs.
+      checks.${system}.mindroom =
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          evalCheck =
-            name: drv:
-            let
-              drvPath = builtins.unsafeDiscardOutputDependency drv.drvPath;
-            in
-            pkgs.runCommand "${name}-eval-check" { } ''
-              echo ${drvPath} > $out
-            '';
+          toplevelDrv = builtins.unsafeDiscardOutputDependency self.nixosConfigurations.mindroom.config.system.build.toplevel.drvPath;
         in
-        {
-          mindroom = evalCheck "mindroom" self.nixosConfigurations.mindroom.config.system.build.toplevel;
-          mindroom-microvm = evalCheck "mindroom-microvm" self.packages.${system}.mindroom-microvm;
-        };
+        pkgs.runCommand "mindroom-eval-check" { } ''
+          echo ${toplevelDrv} > $out
+        '';
     };
 }
