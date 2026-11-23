@@ -30,7 +30,7 @@ Follow [AGENTS.md](AGENTS.md) for the exact copy-paste commands:
 | `mindroom-chat` | MindRoom agents on hosted `mindroom.chat` (default off) | `127.0.0.1:8766` |
 | `git-checkout-*` | Keeps MindRoom and MindRoom Chat at pinned commits | — |
 
-The container runs with `security.nesting=true` and ships Docker, Incus, distrobox, and CLI dev tools. Toggle `lab` or `chat` in [hosts/mindroom/default.nix](hosts/mindroom/default.nix).
+The container runs with `security.nesting=true` and ships Docker, Incus, distrobox, and CLI dev tools. Toggle `lab` or `chat` in [hosts/mindroom/default.nix](hosts/mindroom/default.nix) (`chat` needs hosted `mindroom.chat` pairing credentials in `chat-runtime.env.age`). Changing domains in [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix) also requires updating `MATRIX_SERVER_NAME` and `MINDROOM_OWNER_USER_ID` in `lab-runtime.env.age` and a matching MindRoom Chat build.
 
 ## Who has root
 
@@ -41,13 +41,13 @@ Treat the container as the security boundary and as expendable; keep anything ag
 ## Your setup is in git
 
 On first boot, `mindroom-lab` runs `mindroom config init --no-input --matrix-server self-hosted --provider openai` (reading `MINDROOM_OWNER_USER_ID` from `lab-runtime.env.age`), turns `/var/lib/mindroom/lab` into a Git repository, and commits the generated `config.yaml` and agent workspace.
-Secrets, `.env`, `.venv/`, databases, logs, and other runtime state under `mindroom_data/` are excluded by `.gitignore`, and `agenix` (`/run/agenix/*`) is the single source of runtime environment variables.
-The agent's workspace `AGENTS.md` instructs it to commit every setup change with a clear message and never commit secrets.
-Because this NixOS flake is mounted at `/mnt/repo`, the agent is also told to commit any NixOS edits it makes there.
+A deny-by-default `.gitignore` tracks only `config.yaml`, `.gitignore`, and agent workspaces (excluding `.ssh/`, `.config/`, credentials, keys, `.env*`, venvs, caches, databases, and runtime state); agenix provides the runtime env; config init's starter `.env` is removed.
+The agent's workspace `AGENTS.md` instructs it to stage only the files it changed, commit every setup change with a clear message, and never commit secrets.
+The NixOS deployment flake belongs to the operator on the host.
 
 ## Security
 
-- **TLS proxy required:** Caddy serves plain HTTP on port 80 only, while Matrix `.well-known` advertises `https://`. Put a TLS-terminating reverse proxy in front before exposing port 80 (or drop `:80` in [hosts/mindroom/caddy.nix](hosts/mindroom/caddy.nix) to let Caddy terminate TLS on 80/443).
+- **TLS proxy required:** Caddy serves plain HTTP on port 80 only, while Matrix `.well-known` advertises `https://`. Put a TLS-terminating reverse proxy in front before exposing port 80 (or drop `:80` in [hosts/mindroom/caddy.nix](hosts/mindroom/caddy.nix) and open 443 in [hosts/mindroom/networking.nix](hosts/mindroom/networking.nix) to let Caddy terminate TLS on 80/443).
 - **Firewall:** Only TCP 80, TCP 22, and mosh UDP 60000–61000 are open; Tuwunel and the runtime APIs listen on loopback only.
 - **Secrets:** Committed `.age` files and `secrets.nix` are placeholders only; real secrets are encrypted with `ragenix` and decrypted at activation via `agenix`.
 

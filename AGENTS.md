@@ -88,28 +88,39 @@ If you run this on a machine other than the Incus host, copy the results back in
 
 **Non-interactive (recommended for agents and automation):**
 
-```bash
-nix shell .#ragenix -c ./scripts/bootstrap-secrets.sh --non-interactive
-```
-
-No editor is opened: every secret is encrypted from its template, the Tuwunel registration token is auto-generated and written to BOTH `registration-token.age` and `lab-runtime.env.age`, and existing secrets are kept, so re-runs are safe.
-This alone produces a fully working lab deployment; agents just cannot answer until a real LLM provider key exists.
-
-To inject real values (API keys and the like), put files in a directory and pass `--values-dir`:
+If `OPENAI_API_KEY` is already exported in your environment, it is used directly; otherwise `read -rsp` prompts silently on a TTY (or fails closed if stdin is not a TTY) so the key never enters shell history.
+Plaintext staging requires a filesystem verified as `tmpfs` (`$XDG_RUNTIME_DIR` then `/dev/shm`, failing closed otherwise) and is deleted on subshell exit:
 
 ```bash
-install -d -m 700 /dev/shm/mindroom-secrets
-cat > /dev/shm/mindroom-secrets/agent-integrations.env <<'EOF'
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=...
-EOF
-nix shell .#ragenix -c ./scripts/bootstrap-secrets.sh --non-interactive --values-dir /dev/shm/mindroom-secrets
-rm -rf /dev/shm/mindroom-secrets
+(
+  set -euo pipefail
+  if [ -z "${OPENAI_API_KEY:-}" ]; then
+    if [ ! -t 0 ]; then
+      echo "OPENAI_API_KEY is not set and stdin is not a TTY; export OPENAI_API_KEY and re-run." >&2
+      exit 1
+    fi
+    read -rsp "OPENAI_API_KEY: " OPENAI_API_KEY
+    echo
+  fi
+  TMPFS_BASE=""
+  for candidate in "${XDG_RUNTIME_DIR:-}" /dev/shm; do
+    if [ -n "$candidate" ] && [ -d "$candidate" ] && [ -w "$candidate" ] \
+      && [ "$(stat -f -c %T "$candidate" 2>/dev/null || true)" = "tmpfs" ]; then
+      TMPFS_BASE="$candidate"
+      break
+    fi
+  done
+  [ -n "$TMPFS_BASE" ] || { echo "Neither \$XDG_RUNTIME_DIR nor /dev/shm is a writable tmpfs; refusing to stage plaintext secrets on disk." >&2; exit 1; }
+  SECRETS_TMP="$(umask 077 && mktemp -d "$TMPFS_BASE/mindroom-secrets.XXXXXX")"
+  trap 'rm -rf "$SECRETS_TMP"' EXIT
+  (umask 077 && printf 'OPENAI_API_KEY=%s\n' "$OPENAI_API_KEY" > "$SECRETS_TMP/agent-integrations.env")
+  nix shell .#ragenix -c ./scripts/bootstrap-secrets.sh --non-interactive --values-dir "$SECRETS_TMP"
+)
 ```
 
-File names in that directory (no `.age` suffix): `agent-integrations.env`, `agent-tooling.env`, `agent-runtime.env`, `lab-runtime.env`, `chat-runtime.env`, `registration-token`.
-Missing files fall back to the template.
-The directory holds plaintext secrets — keep it on tmpfs and delete it afterwards.
+Supported filenames in `--values-dir` (no `.age` suffix): `agent-integrations.env`, `agent-tooling.env`, `agent-runtime.env`, `lab-runtime.env`, `chat-runtime.env`, `registration-token`.
+Missing files fall back to `templates/`.
+If you enabled `chat.enable = true`, also write `$SECRETS_TMP/chat-runtime.env` before running the script and append `--with-chat`.
 
 **Interactive (humans):**
 
@@ -134,9 +145,11 @@ Rules that matter:
 - `registration-token.age` and the `MATRIX_REGISTRATION_TOKEN` value inside `lab-runtime.env.age` must be the SAME token.
   The bootstrap script keeps them in sync automatically; only if you edit these secrets by hand do you need to keep them identical yourself.
 - The lab template's `MATRIX_HOMESERVER=http://127.0.0.1:8008` and `MATRIX_SERVER_NAME=mindroom.lab.mindroom.chat` defaults are correct for an unmodified deployment; keep them.
-- `templates/lab-runtime.env.example` sets `MINDROOM_OWNER_USER_ID=@you:mindroom.lab.mindroom.chat`, which `mindroom config init` reads on first boot to populate `administrators` and `room_defaults` without editing `config.yaml` (change the localpart in `lab-runtime.env` before first boot if you want a different username). Agenix (`/run/agenix/*`) is the single source of runtime env; `config init`'s starter `.env` is removed.
+- `templates/lab-runtime.env.example` sets `MINDROOM_OWNER_USER_ID=@you:mindroom.lab.mindroom.chat`, which `mindroom config init` reads on first boot to populate `administrators` and `room_defaults` without editing `config.yaml` (change the localpart in `lab-runtime.env` before first boot if you want a different username). agenix provides the runtime env; config init's starter `.env` is removed.
 - Only bootstrap `chat-runtime.env.age` when you enabled the chat runtime: `./scripts/bootstrap-secrets.sh --with-chat`.
-- Upgrading an older deployment: its `lab-runtime.env.age` / `chat-runtime.env.age` may still contain empty lines such as `OPENAI_API_KEY=`, which override the shared keys from `agent-integrations.env.age`; re-edit those secrets and delete the empty lines.
+- Upgrading an existing deployment:
+  - Add `MINDROOM_OWNER_USER_ID=@you:mindroom.lab.mindroom.chat` (or your Matrix user ID) to `lab-runtime.env.age`, and replace `__MINDROOM_OWNER_USER_ID_FROM_PAIRING__` with your quoted Matrix user ID in `/var/lib/mindroom/lab/config.yaml` once.
+  - agenix values now win over any local `.env`; put overrides in the encrypted runtime env (`lab-runtime.env.age` / `chat-runtime.env.age`) and delete any empty lines such as `OPENAI_API_KEY=` that would override `agent-integrations.env.age`.
 - Re-editing an existing secret interactively requires the operator private key.
   ragenix finds keys in the default SSH paths; otherwise pass `--identity /path/to/key`.
   Non-interactive runs never re-encrypt existing secrets.
@@ -213,8 +226,22 @@ Register the owner Matrix account, restart `mindroom-lab` so it invites you to t
 ```bash
 incus exec mindroom -- /run/current-system/sw/bin/su - mindroom -s /run/current-system/sw/bin/bash <<'EOF'
 set -euo pipefail
-OWNER_ID=$(sudo awk -F= '$1=="MINDROOM_OWNER_USER_ID"{print $2}' /run/agenix/lab-runtime-env)
-OWNER_ID="${OWNER_ID:-@you:mindroom.lab.mindroom.chat}"
+OWNER_ID=$(sudo awk -F= '$1=="MINDROOM_OWNER_USER_ID"{sub(/^[^=]*=/,""); print; exit}' /run/agenix/lab-runtime-env | tr -d '\r')
+if [ -z "$OWNER_ID" ] || [ "$OWNER_ID" = "__MINDROOM_OWNER_USER_ID_FROM_PAIRING__" ]; then
+  echo "MINDROOM_OWNER_USER_ID is unset or still a placeholder in /run/agenix/lab-runtime-env; set it to @<user>:mindroom.lab.mindroom.chat and re-deploy before registering." >&2
+  exit 1
+fi
+if grep -qF "__MINDROOM_OWNER_USER_ID_FROM_PAIRING__" /var/lib/mindroom/lab/config.yaml; then
+  echo "/var/lib/mindroom/lab/config.yaml still contains __MINDROOM_OWNER_USER_ID_FROM_PAIRING__; replace it with \"$OWNER_ID\" and restart mindroom-lab before registering." >&2
+  exit 1
+fi
+case "$OWNER_ID" in
+  @*:* ) ;;
+  *)
+    echo "Invalid MINDROOM_OWNER_USER_ID '$OWNER_ID' (expected @<user>:<server>)." >&2
+    exit 1
+    ;;
+esac
 USER_LOCALPART="${OWNER_ID#@}"
 USER_LOCALPART="${USER_LOCALPART%%:*}"
 PASSWORD=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
@@ -288,7 +315,7 @@ Expect `Registered @you:mindroom.lab.mindroom.chat ...` followed by `Reply from 
 - `mindroom-lab` runs as `mindroom` with passwordless `sudo`, Docker, and Incus access, and keeps its setup (`/var/lib/mindroom/lab`) in Git.
 - When signing in through MindRoom Chat (which defaults to hosted `mindroom.chat`), enter the lab homeserver `https://mindroom.lab.mindroom.chat` (served through your TLS proxy) before logging in.
 - TLS: nothing in this container terminates TLS.
-  Put a TLS-terminating reverse proxy in front, or remove the `":80"` suffixes in [hosts/mindroom/caddy.nix](hosts/mindroom/caddy.nix) so Caddy provisions certificates itself (requires public DNS and reachability on 80/443).
+  Put a TLS-terminating reverse proxy in front, or remove the `":80"` suffixes in [hosts/mindroom/caddy.nix](hosts/mindroom/caddy.nix) and open port 443 in [hosts/mindroom/networking.nix](hosts/mindroom/networking.nix) so Caddy provisions certificates itself (requires public DNS and reachability on 80/443).
 
 ## Updating
 
