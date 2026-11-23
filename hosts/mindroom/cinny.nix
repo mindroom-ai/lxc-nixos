@@ -8,7 +8,7 @@ in
     repositories.cinny = {
       path = "/var/www/cinny";
       url = "https://github.com/mindroom-ai/mindroom-chat.git";
-      branch = "dev";
+      branch = "main";
       rev = constants.cinnyRev;
       user = config.mindroom.runtime.user;
       group = config.mindroom.runtime.group;

@@ -21,9 +21,9 @@ Follow https://github.com/mindroom-ai/lxc-nixos/blob/main/AGENTS.md to deploy Mi
 **What you need:**
 
 - An `x86_64-linux` host running (or able to install) Incus
-- Nix on `x86_64-linux` (the host, a workstation, or the container) for secret bootstrap
+- Nix on `x86_64-linux` (the host, a Linux workstation, or the container) for secret bootstrap
 - An SSH key pair for operator access and secret encryption
-- An LLM API key (such as `OPENAI_API_KEY`) so agents can reply
+- An OpenAI API key (`OPENAI_API_KEY`) for the runbook as written (other providers can be added to `agent-integrations.env`)
 
 ## What's Included
 
@@ -45,7 +45,8 @@ The container also includes Docker, Incus, distrobox, and CLI dev tools for the 
 
 ## Good to Know
 
-- **Security boundary:** The container is the sandbox — agents run as the operator user with root and Docker access inside it by design, so treat the container as expendable (see [Security Model](AGENTS.md#security-model)).
+- **Security boundary:** The container is the sandbox — agents run as the operator user with full passwordless root (`sudo`) and Docker/Incus access inside it by design (and can modify the host checkout mounted at `/mnt/repo`), so treat the container as expendable (see [Security Model](AGENTS.md#security-model)).
+- **Version-controlled setup from `mindroom config init`:** First boot generates `config.yaml` directly from `mindroom config init --no-input --matrix-server self-hosted --provider openai` (filling the owner from `MINDROOM_OWNER_USER_ID`), initializes `/var/lib/mindroom/lab` (`config.yaml` and agent workspaces) as a Git repo with a deny-by-default `.gitignore`, and instructs the agent to commit every setup change.
 - **HTTPS / TLS:** Caddy listens on plain HTTP port 80 only; put a TLS-terminating reverse proxy in front before exposing publicly (see [TLS Model](AGENTS.md#tls-model)).
 - **Updates:** Pinned versions update daily via GitHub Actions; `git pull` plus `nixos-rebuild switch` applies them while leaving local checkout edits untouched (see [Version Pinning and Updates](AGENTS.md#version-pinning-and-updates)).
 - **Looking for a microVM instead?** See [mindroom-ai/microvm-nixos](https://github.com/mindroom-ai/microvm-nixos) to deploy the same stack in a standalone QEMU microVM.

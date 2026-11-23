@@ -202,7 +202,20 @@ check_kept_secret() {
 # mode encrypts them as-is. Contents come from --values-dir when a matching
 # file exists there, otherwise from templates/.
 
-content_dir="$(mktemp -d)"
+# Stage plaintext secret files (and ragenix's edit tempfile) on verified tmpfs only.
+tmpfs_base=""
+for candidate in "${XDG_RUNTIME_DIR:-}" /dev/shm; do
+  if [ -n "$candidate" ] && [ -d "$candidate" ] && [ -w "$candidate" ] \
+    && [ "$(stat -f -c %T "$candidate" 2>/dev/null || true)" = "tmpfs" ]; then
+    tmpfs_base="$candidate"
+    break
+  fi
+done
+if [ -z "$tmpfs_base" ]; then
+  echo "ERROR: neither \$XDG_RUNTIME_DIR nor /dev/shm is a writable tmpfs; refusing to stage plaintext secrets on disk." >&2
+  exit 1
+fi
+content_dir="$(umask 077 && mktemp -d "$tmpfs_base/mindroom-bootstrap.XXXXXX")"
 trap 'rm -rf "$content_dir"' EXIT
 
 content_for() {
@@ -228,13 +241,15 @@ case "$registration_token" in
     exit 1
     ;;
 esac
-printf '%s\n' "$registration_token" >"$content_dir/registration-token"
-
-content_for agent-integrations.env "$repo_root/templates/agent-integrations.env.example" >"$content_dir/agent-integrations.env"
-content_for agent-tooling.env "$repo_root/templates/agent-tooling.env.example" >"$content_dir/agent-tooling.env"
-content_for agent-runtime.env "$repo_root/templates/agent-runtime.env.example" >"$content_dir/agent-runtime.env"
-content_for lab-runtime.env "$repo_root/templates/lab-runtime.env.example" >"$content_dir/lab-runtime.env"
-content_for chat-runtime.env "$repo_root/templates/chat-runtime.env.example" >"$content_dir/chat-runtime.env"
+(
+  umask 077
+  printf '%s\n' "$registration_token" >"$content_dir/registration-token"
+  content_for agent-integrations.env "$repo_root/templates/agent-integrations.env.example" >"$content_dir/agent-integrations.env"
+  content_for agent-tooling.env "$repo_root/templates/agent-tooling.env.example" >"$content_dir/agent-tooling.env"
+  content_for agent-runtime.env "$repo_root/templates/agent-runtime.env.example" >"$content_dir/agent-runtime.env"
+  content_for lab-runtime.env "$repo_root/templates/lab-runtime.env.example" >"$content_dir/lab-runtime.env"
+  content_for chat-runtime.env "$repo_root/templates/chat-runtime.env.example" >"$content_dir/chat-runtime.env"
+)
 
 if grep -q '^MATRIX_REGISTRATION_TOKEN=$' "$content_dir/lab-runtime.env"; then
   # sed -i.bak (no space) works with both GNU and BSD sed.
@@ -288,7 +303,8 @@ exec "${BOOTSTRAP_REAL_EDITOR:-vi}" "$target"
 EOF
   chmod +x "$wrapper"
 
-  BOOTSTRAP_TEMPLATE="$content_path" \
+  TMPDIR="$content_dir" \
+    BOOTSTRAP_TEMPLATE="$content_path" \
     BOOTSTRAP_REAL_EDITOR="$real_editor" \
     ragenix --editor "$wrapper" --rules "$rules_path" --edit "$secret_path"
 
