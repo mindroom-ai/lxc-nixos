@@ -47,15 +47,23 @@ let
 
     .ssh/
     .config/
+    .docker/
+    .kube/
+    .codex/
+    .aws/
+    .gnupg/
     .npmrc
     .netrc
     .git-credentials
+    .pgpass
     .env*
     *.age
+    *.key
     *.pem
-    *key*
-    id_*
-    credentials*
+    id_rsa*
+    id_ed25519*
+    id_ecdsa*
+    credentials.json
     .venv/
     node_modules/
     __pycache__/
@@ -80,9 +88,9 @@ let
       ## Guest Environment and Version Control
 
       - **Root access:** You run as `${cfg.user}` with passwordless `sudo`, Docker, and Incus access — you have full root inside this container. Use `sudo -n ...` for privileged commands.
-      - **Version-controlled setup:** Your MindRoom setup (`config.yaml` and agent workspaces under `mindroom_data/agents/*/workspace/`) is a Git repository at `${dir}`.
-        - After every change you make to `config.yaml`, workspace files, memory, or skills, stage only the specific files you changed (`git -C ${dir} add <paths>`) and commit with a clear message (`git -C ${dir} commit -m "..."`). Never use `git add -A`.
-        - Never commit secrets (`.env*`, `/run/agenix/*`, `.ssh/`, `.config/`, credentials, keys, or runtime databases — `.gitignore` excludes them; do not force-add them).
+      - **Version-controlled setup:** Your MindRoom setup (`config.yaml` and agent workspaces under `mindroom_data/agents/*/workspace/`) is version-controlled under `${dir}` (a workspace may also have its own nested Git repo).
+        - After every change you make to `config.yaml`, workspace files, memory, or skills, commit it in the repo that owns the file (`repo=$(git -C "$(dirname <file>)" rev-parse --show-toplevel)`), staging only the specific files you changed (`git -C "$repo" add -- <paths> && git -C "$repo" commit -m "..."`). Never use `git add -A`.
+        - Never commit secrets (`.env*`, `/run/agenix/*`, `.ssh/`, `.config/`, `.docker/`, `.kube/`, `.codex/`, `.aws/`, `.gnupg/`, credentials, keys, or runtime databases — `.gitignore` excludes them; do not force-add them).
       - **System flake:** The NixOS deployment flake belongs to the operator on the host; do not modify or rebuild it from inside the guest.
     '';
 
@@ -137,14 +145,40 @@ let
         fi
 
         if ! git -C "${dir}" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+          created_gitignore=0
           if [ ! -f "${dir}/.gitignore" ]; then
             install -m 0644 "${setupGitignoreFile}" "${dir}/.gitignore"
+            created_gitignore=1
           fi
           git -C "${dir}" init -b main
           git -C "${dir}" config user.name "MindRoom Agent"
           git -C "${dir}" config user.email "mindroom@localhost"
-          git -C "${dir}" add -A
-          git -C "${dir}" commit -m "Initial MindRoom setup"
+
+          files=()
+          for f in .gitignore config.yaml; do
+            [ -f "${dir}/$f" ] && ! git -C "${dir}" check-ignore -q -- "$f" && files+=("$f")
+          done
+          for ws in "${dir}"/mindroom_data/agents/*/workspace; do
+            [ -d "$ws" ] || continue
+            rel_ws="''${ws#${dir}/}"
+            if [ -e "$ws/.git" ]; then
+              mkdir -p "${dir}/.git/info"
+              grep -qxF "/$rel_ws/" "${dir}/.git/info/exclude" 2>/dev/null \
+                || printf '/%s/\n' "$rel_ws" >> "${dir}/.git/info/exclude"
+              if [ "$created_gitignore" = 1 ]; then
+                grep -qxF "/$rel_ws/" "${dir}/.gitignore" 2>/dev/null \
+                  || printf '/%s/\n' "$rel_ws" >> "${dir}/.gitignore"
+              fi
+              continue
+            fi
+            for f in SOUL.md AGENTS.md USER.md IDENTITY.md TOOLS.md HEARTBEAT.md MEMORY.md; do
+              [ -f "$ws/$f" ] && ! git -C "${dir}" check-ignore -q -- "$rel_ws/$f" && files+=("$rel_ws/$f")
+            done
+          done
+          if [ "''${#files[@]}" -gt 0 ]; then
+            git -C "${dir}" add -- "''${files[@]}"
+            git -C "${dir}" commit -m "Initial MindRoom setup"
+          fi
         fi
       '';
       serviceConfig = {
