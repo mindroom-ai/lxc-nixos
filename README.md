@@ -6,7 +6,7 @@
 </picture>
 
 Deploy a self-contained MindRoom stack — local Matrix homeserver, MindRoom Chat web UI, reverse proxy, and AI agent runtime — in an Incus LXC container.
-Secrets are encrypted and managed with `agenix` and `ragenix`.
+Secrets are encrypted and managed with `ragenix`.
 
 ## Quick Start
 
@@ -15,13 +15,13 @@ Secrets are encrypted and managed with `agenix` and `ragenix`.
 Paste this prompt into your coding agent:
 
 ```text
-Clone https://github.com/mindroom-ai/lxc-nixos and follow AGENTS.md to deploy MindRoom.
+Follow https://github.com/mindroom-ai/lxc-nixos/blob/main/AGENTS.md to deploy MindRoom.
 ```
 
 **What you need:**
 
-- A Linux host running (or able to install) Incus
-- Nix (on the host, a workstation, or the container) for secret bootstrap
+- An `x86_64-linux` host running (or able to install) Incus
+- Nix on `x86_64-linux` (the host, a workstation, or the container) for secret bootstrap
 - An SSH key pair for operator access and secret encryption
 - An LLM API key (such as `OPENAI_API_KEY`) so agents can reply
 
@@ -54,7 +54,7 @@ The container also includes Docker, Incus, distrobox, and CLI dev tools for the 
 
 - `flake.nix` — NixOS flake for the container system config and pinned `ragenix`
 - `hosts/mindroom/` — host configuration, version pins, runtime toggles, and per-service configs
-- `modules/` — LXC container wiring, base system, git checkouts, runtime services, and dev tooling
+- `modules/` — LXC container wiring, base system, git checkouts, runtime services, secrets wiring, and dev tooling
 - `secrets/` + `hosts/mindroom/secrets/` — encrypted secrets and recipient lists (placeholders only in git)
 - `templates/` — plaintext templates used to seed secrets during bootstrap
 - `scripts/` — `bootstrap-secrets.sh` and `update-pins.sh`

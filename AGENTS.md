@@ -238,7 +238,7 @@ incus exec mindroom -- /run/current-system/sw/bin/systemctl restart \
 | --- | --- | --- |
 | `tuwunel` | Local Matrix homeserver (MindRoom Tuwunel fork, pinned release binary) | 8008 (loopback) |
 | `caddy` | HTTP reverse proxy / routing for the public hostnames | 80 |
-| `mindroom-cinny` | MindRoom Chat web client (built in-container on first activation) | 8090 (all interfaces; the firewall only opens 80) |
+| `mindroom-cinny` | MindRoom Chat web client (built in-container on first activation) | 8090 (all interfaces; not open in the container firewall) |
 | `mindroom-lab` | MindRoom agent runtime — local homeserver (optional, default on) | 8765 (loopback; unauthenticated dashboard/API, not proxied) |
 | `mindroom-chat` | MindRoom agent runtime — hosted mindroom.chat (optional, default off) | 8766 (loopback; proxied by Caddy when enabled) |
 | `git-checkout-*` | Keep the MindRoom and MindRoom Chat checkouts at the pinned revisions | — |
@@ -272,7 +272,7 @@ Encrypted secrets and their recipient lists live in `secrets/shared/` and `hosts
 The container is the security boundary, and everything inside it is deliberately trusted:
 the agents run as the operator account, which has passwordless sudo and Docker access, so **agents have root inside the container by design**.
 Treat the container as expendable, and do not put anything inside it that the agents must not touch.
-Externally, only port 80 is open; Tuwunel and the runtime APIs listen on loopback.
+The container firewall opens TCP 80 (Caddy), TCP 22 (SSH), and UDP 60000–61000 (mosh); Tuwunel and the runtime APIs listen on loopback.
 
 ### TLS Model
 
