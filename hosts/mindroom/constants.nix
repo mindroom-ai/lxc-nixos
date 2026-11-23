@@ -10,7 +10,7 @@ in
   inherit siteDomain;
   publicBaseDomain = "lab.mindroom.chat";
   publicSiteDomain = siteDomain;
-  publicCinnyDomain = "chat.lab.mindroom.chat";
+  publicChatDomain = "chat.lab.mindroom.chat";
   tuwunelVersion = "v1.9.4-mindroom.22";
   tuwunelArchiveHash = "sha256-Aj3ONFb2S6Sj9Ja9xi7dWXuU3dfNQp+KIfb8Zq2BNZQ=";
 
@@ -18,5 +18,5 @@ in
   # bumped daily by .github/workflows/update-pins.yml; to bump by hand run
   # scripts/update-pins.sh and rebuild.
   mindroomRev = "581736d796b4a145117e5af40e726ab5c34ff87f";
-  cinnyRev = "9d824c68c3d776e195fe804986868063c0e8a08e";
+  mindroomChatRev = "9d824c68c3d776e195fe804986868063c0e8a08e";
 }

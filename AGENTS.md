@@ -184,11 +184,11 @@ incus exec mindroom -- /run/current-system/sw/bin/nixos-rebuild switch \
 
 ## 10. Post-Deploy Verification
 
-The MindRoom Chat web UI is built inside the container on first activation, so `mindroom-cinny` takes a few extra minutes to come up after the switch finishes.
+The MindRoom Chat web UI is built inside the container on first activation, so `mindroom-chat-ui` takes a few extra minutes to come up after the switch finishes.
 Check the build first:
 
 ```bash
-incus exec mindroom -- /run/current-system/sw/bin/systemctl status mindroom-cinny-build --no-pager
+incus exec mindroom -- /run/current-system/sw/bin/systemctl status mindroom-chat-ui-build --no-pager
 ```
 
 Then the full set (drop `mindroom-lab` or add `mindroom-chat` to match your toggles):
@@ -196,7 +196,7 @@ Then the full set (drop `mindroom-lab` or add `mindroom-chat` to match your togg
 ```bash
 incus exec mindroom -- /run/current-system/sw/bin/systemctl --failed --no-pager
 incus exec mindroom -- /run/current-system/sw/bin/systemctl status \
-  tuwunel caddy mindroom-lab mindroom-cinny --no-pager
+  tuwunel caddy mindroom-lab mindroom-chat-ui --no-pager
 ```
 
 Functional checks from the Incus host (replace the IP with the container's):
@@ -214,7 +214,7 @@ Logs when something is off:
 
 ```bash
 incus exec mindroom -- /run/current-system/sw/bin/journalctl -u mindroom-lab -n 100 --no-pager
-incus exec mindroom -- /run/current-system/sw/bin/journalctl -u mindroom-cinny-build -n 100 --no-pager
+incus exec mindroom -- /run/current-system/sw/bin/journalctl -u mindroom-chat-ui-build -n 100 --no-pager
 incus exec mindroom -- /run/current-system/sw/bin/journalctl -u tuwunel -n 100 --no-pager
 ```
 
@@ -347,7 +347,7 @@ If a checkout or build service fails transiently (network, OOM), rerun it:
 
 ```bash
 incus exec mindroom -- /run/current-system/sw/bin/systemctl restart \
-  git-checkout-cinny.service mindroom-cinny-build.service mindroom-cinny.service
+  git-checkout-mindroom-chat.service mindroom-chat-ui-build.service mindroom-chat-ui.service
 ```
 
 ## Reference
@@ -358,7 +358,7 @@ incus exec mindroom -- /run/current-system/sw/bin/systemctl restart \
 | --- | --- | --- |
 | `tuwunel` | Local Matrix homeserver (MindRoom Tuwunel fork, pinned release binary) | 8008 (loopback) |
 | `caddy` | HTTP reverse proxy / routing for the public hostnames | 80 |
-| `mindroom-cinny` | MindRoom Chat web client (built in-container on first activation) | 8090 (all interfaces; not open in the container firewall) |
+| `mindroom-chat-ui` | MindRoom Chat web client (built in-container on first activation) | 8090 (all interfaces; not open in the container firewall) |
 | `mindroom-lab` | MindRoom agent runtime — local homeserver (optional, default on) | 8765 (loopback; unauthenticated dashboard/API, not proxied) |
 | `mindroom-chat` | MindRoom agent runtime — hosted mindroom.chat (optional, default off) | 8766 (loopback; proxied by Caddy when enabled) |
 | `git-checkout-*` | Keep the MindRoom and MindRoom Chat checkouts at the pinned revisions | — |
@@ -408,7 +408,7 @@ Either put one there, or remove the `":80"` suffixes in [hosts/mindroom/caddy.ni
 
 ### Version Pinning and Updates
 
-Everything that runs is pinned in [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): the Tuwunel release (`tuwunelVersion` + hash) and the exact commits of the MindRoom and MindRoom Chat checkouts (`mindroomRev`, `cinnyRev`).
+Everything that runs is pinned in [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): the Tuwunel release (`tuwunelVersion` + hash) and the exact commits of the MindRoom and MindRoom Chat checkouts (`mindroomRev`, `mindroomChatRev`).
 The [update-pins](.github/workflows/update-pins.yml) GitHub workflow bumps all three to the latest upstream daily and pushes only after `nix flake check` passes; run [scripts/update-pins.sh](scripts/update-pins.sh) to do the same by hand.
 Applying an update to a running container is `git pull` in the repo clone plus the same `nixos-rebuild switch` used to deploy (see [Updating](#updating)) — the checkout services move to the new pins and the affected services restart (a MindRoom Chat pin bump rebuilds the web UI, which adds a few minutes to the switch).
 A checkout with local changes is never touched, so in-container experiments survive switches; clean checkouts are reset to the pinned commit.
@@ -417,7 +417,7 @@ A checkout with local changes is never touched, so in-container experiments surv
 
 - [hosts/mindroom/default.nix](hosts/mindroom/default.nix): runtime toggles, operator SSH keys, state paths
 - [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): public domains, the Tuwunel release pin, and the MindRoom/MindRoom Chat commit pins
-- [hosts/mindroom/mindroom.nix](hosts/mindroom/mindroom.nix), [hosts/mindroom/cinny.nix](hosts/mindroom/cinny.nix): which repos are checked out and which pins they follow
+- [hosts/mindroom/mindroom.nix](hosts/mindroom/mindroom.nix), [hosts/mindroom/mindroom-chat.nix](hosts/mindroom/mindroom-chat.nix): which repos are checked out and which pins they follow
 
 Changing the public domains in `constants.nix` is not enough by itself: `MATRIX_SERVER_NAME` and `MINDROOM_OWNER_USER_ID` inside `lab-runtime.env.age` must match, and MindRoom Chat bakes its homeserver defaults into its own build, so a full domain change also needs a matching client-side change.
 
@@ -429,7 +429,7 @@ Verified end-to-end on 2026-07-08 by deploying a fresh `images:nixos/unstable` I
 - secret bootstrap via `nix shell .#ragenix -c ./scripts/bootstrap-secrets.sh` (including the refusal path when recipients are missing) and agenix decryption inside the container at activation
 - `nixos-rebuild switch --flake 'path:/mnt/repo#mindroom'` from the host-mounted repo
 - `tuwunel`, `caddy` up; Matrix client API answering through Caddy
-- the in-container MindRoom Chat build (`mindroom-cinny-build`) and the web UI serving through Caddy
+- the in-container MindRoom Chat web UI build and the web UI serving through Caddy
 - `mindroom-lab` starting, installing its uv environment from the `/srv/mindroom` checkout, and registering agents on the local homeserver with the bootstrap registration token
 
 Re-verified on 2026-11-23 in a fresh throwaway Incus container: the step-11 test user got a live agent reply with a real OpenAI key; the agent ran `sudo -n id -u` (`0`), edited its own workspace and committed it to `/var/lib/mindroom/lab`; history survived `incus restart`.
