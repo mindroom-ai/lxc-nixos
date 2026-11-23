@@ -134,6 +134,7 @@ Rules that matter:
 - `registration-token.age` and the `MATRIX_REGISTRATION_TOKEN` value inside `lab-runtime.env.age` must be the SAME token.
   The bootstrap script keeps them in sync automatically; only if you edit these secrets by hand do you need to keep them identical yourself.
 - The lab template's `MATRIX_HOMESERVER=http://127.0.0.1:8008` and `MATRIX_SERVER_NAME=mindroom.lab.mindroom.chat` defaults are correct for an unmodified deployment; keep them.
+- `templates/lab-runtime.env.example` sets `MINDROOM_OWNER_USER_ID=@you:mindroom.lab.mindroom.chat`, which `mindroom config init` reads on first boot to populate `administrators` and `room_defaults` without editing `config.yaml` (change the localpart in `lab-runtime.env` before first boot if you want a different username). Agenix (`/run/agenix/*`) is the single source of runtime env; `config init`'s starter `.env` is removed.
 - Only bootstrap `chat-runtime.env.age` when you enabled the chat runtime: `./scripts/bootstrap-secrets.sh --with-chat`.
 - Upgrading an older deployment: its `lab-runtime.env.age` / `chat-runtime.env.age` may still contain empty lines such as `OPENAI_API_KEY=`, which override the shared keys from `agent-integrations.env.age`; re-edit those secrets and delete the empty lines.
 - Re-editing an existing secret interactively requires the operator private key.
@@ -204,14 +205,90 @@ incus exec mindroom -- /run/current-system/sw/bin/journalctl -u mindroom-cinny-b
 incus exec mindroom -- /run/current-system/sw/bin/journalctl -u tuwunel -n 100 --no-pager
 ```
 
+## 11. Register a Local Lab User and Verify an Agent Reply
+
+On first boot, `mindroom-lab` runs `mindroom config init --no-input --matrix-server self-hosted --provider openai` (filling your owner ID from `MINDROOM_OWNER_USER_ID` in `lab-runtime.env.age`), registers its agents (`@mindroom_user`, `@mindroom_router`, `@mindroom_mind`) on local Tuwunel, and initializes `/var/lib/mindroom/lab` as a Git repository with an initial commit.
+Register the owner Matrix account, restart `mindroom-lab` so it invites you to the `personal` room, accept the invite, and verify a live reply from `@mindroom_mind` (requires a valid LLM provider key from step 7):
+
+```bash
+incus exec mindroom -- /run/current-system/sw/bin/su - mindroom -s /run/current-system/sw/bin/bash <<'EOF'
+set -euo pipefail
+OWNER_ID=$(sudo awk -F= '$1=="MINDROOM_OWNER_USER_ID"{print $2}' /run/agenix/lab-runtime-env)
+OWNER_ID="${OWNER_ID:-@you:mindroom.lab.mindroom.chat}"
+USER_LOCALPART="${OWNER_ID#@}"
+USER_LOCALPART="${USER_LOCALPART%%:*}"
+PASSWORD=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+TOKEN=$(sudo cat /run/agenix/registration-token)
+SESSION=$(curl -sS -X POST http://127.0.0.1:8008/_matrix/client/v3/register \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -cn --arg u "$USER_LOCALPART" --arg p "$PASSWORD" '{username:$u,password:$p}')" | jq -r .session)
+REG=$(jq -cn --arg u "$USER_LOCALPART" --arg p "$PASSWORD" --arg s "$SESSION" --arg t "$TOKEN" \
+  '{username:$u,password:$p,auth:{type:"m.login.registration_token",token:$t,session:$s}}' | \
+  curl -sS -X POST http://127.0.0.1:8008/_matrix/client/v3/register -H 'Content-Type: application/json' -d @-)
+unset TOKEN
+USER_ID=$(printf '%s' "$REG" | jq -r '.user_id // empty')
+ACCESS_TOKEN=$(printf '%s' "$REG" | jq -r '.access_token // empty')
+if [ "$USER_ID" != "$OWNER_ID" ] || [ -z "$ACCESS_TOKEN" ]; then
+  echo "Registration failed (got '${USER_ID:-<empty>}')" >&2
+  exit 1
+fi
+(umask 077 && printf '%s\n' "$PASSWORD" > "$HOME/.lab-user-password")
+unset PASSWORD
+printf 'Registered %s (password saved in ~/.lab-user-password, mode 0600)\n' "$USER_ID"
+
+# Restart mindroom-lab so it invites the newly registered owner to the personal room.
+sudo systemctl restart mindroom-lab
+
+# Wait for the invite to the personal room, join it, and send a test prompt.
+ROOM_ID=""
+for _ in $(seq 1 60); do
+  ROOM_ID=$(curl -sS -H "Authorization: Bearer $ACCESS_TOKEN" \
+    'http://127.0.0.1:8008/_matrix/client/v3/sync?timeout=2000' | \
+    jq -r '
+      ((.rooms.invite // {}) | to_entries | map(select(any(.value.invite_state.events[]?; .type == "m.room.name" and (.content.name // "" | ascii_downcase) == "personal"))) | .[0].key)
+      // empty
+    ')
+  [ -n "$ROOM_ID" ] && break
+  sleep 2
+done
+[ -n "$ROOM_ID" ] || { echo "Timed out waiting for personal room invite" >&2; exit 1; }
+
+ENC_ROOM=$(jq -rn --arg r "$ROOM_ID" '$r|@uri')
+curl -sfS -X POST -H "Authorization: Bearer $ACCESS_TOKEN" -H 'Content-Type: application/json' \
+  -d '{}' "http://127.0.0.1:8008/_matrix/client/v3/join/$ENC_ROOM" >/dev/null
+sleep 2
+curl -sfS -X PUT -H "Authorization: Bearer $ACCESS_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"msgtype":"m.text","body":"@mindroom_mind reply with exactly: LXC-OK","m.mentions":{"user_ids":["@mindroom_mind:mindroom.lab.mindroom.chat"]}}' \
+  "http://127.0.0.1:8008/_matrix/client/v3/rooms/$ENC_ROOM/send/m.room.message/test-$(date +%s)" >/dev/null
+
+# Poll for @mindroom_mind's reply (handles both initial messages and streaming edits).
+REPLY=""
+for _ in $(seq 1 45); do
+  REPLY=$(curl -sS -H "Authorization: Bearer $ACCESS_TOKEN" \
+    "http://127.0.0.1:8008/_matrix/client/v3/rooms/$ENC_ROOM/messages?dir=b&limit=20" | \
+    jq -r '.chunk[]
+      | select(.type == "m.room.message" and .sender == "@mindroom_mind:mindroom.lab.mindroom.chat")
+      | (.content."m.new_content".body // .content.body // "")
+      | select(contains("LXC-OK"))' | head -n 1)
+  [ -n "$REPLY" ] && break
+  sleep 2
+done
+unset ACCESS_TOKEN
+[ -n "$REPLY" ] || { echo "Timed out waiting for @mindroom_mind reply" >&2; exit 1; }
+printf 'Reply from @mindroom_mind: %s\n' "$REPLY"
+EOF
+```
+
+Expect `Registered @you:mindroom.lab.mindroom.chat ...` followed by `Reply from @mindroom_mind: LXC-OK`.
+
 ## Expectations After Deploy
 
 - `tuwunel`, `caddy`, and the MindRoom Chat web UI work with no external services.
 - On the site domain only `/_matrix/*` and the well-known endpoints exist; other paths return 404 unless the chat runtime (which serves the app backend) is enabled.
-- `mindroom-lab` registers its agents on the local homeserver using the registration token; agents need at least one real LLM provider key in `agent-integrations.env.age` to answer.
-- `mindroom-lab` logs startup warnings about `__MINDROOM_OWNER_USER_ID_FROM_PAIRING__`; that placeholder is only filled by the hosted pairing flow and is harmless in lab mode.
+- `mindroom-lab` runs as `mindroom` with passwordless `sudo`, Docker, and Incus access, and keeps its setup (`/var/lib/mindroom/lab`) in Git.
+- When signing in through MindRoom Chat (which defaults to hosted `mindroom.chat`), enter the lab homeserver `https://mindroom.lab.mindroom.chat` (served through your TLS proxy) before logging in.
 - TLS: nothing in this container terminates TLS.
-  Put a TLS-terminating reverse proxy in front (see README), or edit `hosts/mindroom/caddy.nix`.
+  Put a TLS-terminating reverse proxy in front, or remove the `":80"` suffixes in [hosts/mindroom/caddy.nix](hosts/mindroom/caddy.nix) so Caddy provisions certificates itself (requires public DNS and reachability on 80/443).
 
 ## Updating
 

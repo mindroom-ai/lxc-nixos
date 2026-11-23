@@ -5,92 +5,62 @@
   <img src="https://raw.githubusercontent.com/mindroom-ai/mindroom/main/assets/logo/logo-mark.svg" alt="MindRoom Logo" align="right" width="120" />
 </picture>
 
-Standalone NixOS flake for running the MindRoom stack in an Incus LXC container: local Matrix homeserver, web clients, and the MindRoom AI agent runtime, with all secrets managed through `ragenix`.
+Standalone NixOS flake that runs the full MindRoom stack (local Matrix homeserver, MindRoom Chat web UI, Caddy, and MindRoom AI agents) inside an Incus LXC container.
 
-**To deploy, follow [AGENTS.md](AGENTS.md)** — it is the canonical step-by-step runbook, written to be followed verbatim by a human or an agent.
-This README explains what you get and which knobs exist.
+Looking for a QEMU microVM instead? See [mindroom-ai/microvm-nixos](https://github.com/mindroom-ai/microvm-nixos).
 
-## What Runs Inside the Container
+## Deploy
 
-| Service | Purpose | Port |
+Follow [AGENTS.md](AGENTS.md) for the exact copy-paste commands:
+
+1. Clone this repo on an Incus host, launch a NixOS container, and mount the repo at `/mnt/repo`.
+2. Add your SSH public key to [hosts/mindroom/default.nix](hosts/mindroom/default.nix).
+3. Add your key and the container's SSH host key to `secrets.nix`, then run `./scripts/bootstrap-secrets.sh` with your LLM API key.
+4. Run `nixos-rebuild switch --flake 'path:/mnt/repo#mindroom' --option sandbox false` inside the container.
+5. Register your Matrix user and message `@mindroom_mind`.
+
+## What runs
+
+| Service | Role | Port |
 | --- | --- | --- |
-| `tuwunel` | Local Matrix homeserver (MindRoom Tuwunel fork, pinned release binary) | 8008 (loopback) |
-| `caddy` | HTTP reverse proxy / routing for the public hostnames | 80 |
-| `mindroom-cinny` | MindRoom Chat web client (built in-container on first activation) | 8090 (all interfaces; the firewall only opens 80) |
-| `mindroom-lab` | MindRoom agent runtime — local homeserver (optional, default on) | 8765 (loopback; unauthenticated dashboard/API, not proxied) |
-| `mindroom-chat` | MindRoom agent runtime — hosted mindroom.chat (optional, default off) | 8766 (loopback; proxied by Caddy when enabled) |
-| `git-checkout-*` | Keep the MindRoom and MindRoom Chat checkouts at the pinned revisions | — |
+| `tuwunel` | Local Matrix homeserver | `127.0.0.1:8008` |
+| `caddy` | HTTP reverse proxy | `80` |
+| `mindroom-cinny` | MindRoom Chat web UI (built in-container) | `8090` (proxied by Caddy) |
+| `mindroom-lab` | MindRoom agents on local Tuwunel (default on) | `127.0.0.1:8765` |
+| `mindroom-chat` | MindRoom agents on hosted `mindroom.chat` (default off) | `127.0.0.1:8766` |
+| `git-checkout-*` | Keeps MindRoom and MindRoom Chat at pinned commits | — |
 
-The container also ships Docker, Incus, distrobox, and a CLI/dev toolbox for the operator account and the agents.
+The container runs with `security.nesting=true` and ships Docker, Incus, distrobox, and CLI dev tools. Toggle `lab` or `chat` in [hosts/mindroom/default.nix](hosts/mindroom/default.nix).
 
-## One Application, Two Runtimes
+## Who has root
 
-MindRoom runs as up to two independent instances of the same application, toggled in [hosts/mindroom/default.nix](hosts/mindroom/default.nix):
+**Agents have full root inside the container by design.**
+The MindRoom runtime runs as the `mindroom` operator account with passwordless `sudo`, Docker, and Incus access, and `/run/wrappers/bin` on its `PATH` so the agent's shell tool can run `sudo` directly.
+Treat the container as the security boundary and as expendable; keep anything agents must not touch outside it.
 
-- **lab** (`mindroom.runtime.lab.enable`, default `true`): agents that register and log in on the **local Tuwunel homeserver inside this container**, using the registration token you create during secret bootstrap.
-  Fully self-contained — this is the one you want when trying the repo out.
-- **chat** (`mindroom.runtime.chat.enable`, default `false`): agents that connect out to the **hosted mindroom.chat homeserver**.
-  Requires pairing credentials (`MINDROOM_LOCAL_CLIENT_ID/SECRET`) in `chat-runtime.env.age`, so leave it off unless you have them.
+## Your setup is in git
 
-Each enabled runtime gets its own state directory, `config.yaml`, uv environment, and encrypted env file; they share the two org-wide secret bundles (`agent-integrations`, `agent-tooling`).
-Secrets are only required for runtimes you actually enable.
+On first boot, `mindroom-lab` runs `mindroom config init --no-input --matrix-server self-hosted --provider openai` (reading `MINDROOM_OWNER_USER_ID` from `lab-runtime.env.age`), turns `/var/lib/mindroom/lab` into a Git repository, and commits the generated `config.yaml` and agent workspace.
+Secrets, `.env`, `.venv/`, databases, logs, and other runtime state under `mindroom_data/` are excluded by `.gitignore`, and `agenix` (`/run/agenix/*`) is the single source of runtime environment variables.
+The agent's workspace `AGENTS.md` instructs it to commit every setup change with a clear message and never commit secrets.
+Because this NixOS flake is mounted at `/mnt/repo`, the agent is also told to commit any NixOS edits it makes there.
 
-## Security Model
+## Security
 
-The container is the security boundary, and everything inside it is deliberately trusted:
-the agents run as the operator account, which has passwordless sudo and Docker access, so **agents have root inside the container by design**.
-Treat the container as expendable, and do not put anything inside it that the agents must not touch.
-Externally, only port 80 is open; Tuwunel and the runtime APIs listen on loopback.
+- **TLS proxy required:** Caddy serves plain HTTP on port 80 only, while Matrix `.well-known` advertises `https://`. Put a TLS-terminating reverse proxy in front before exposing port 80 (or drop `:80` in [hosts/mindroom/caddy.nix](hosts/mindroom/caddy.nix) to let Caddy terminate TLS on 80/443).
+- **Firewall:** Only TCP 80, TCP 22, and mosh UDP 60000–61000 are open; Tuwunel and the runtime APIs listen on loopback only.
+- **Secrets:** Committed `.age` files and `secrets.nix` are placeholders only; real secrets are encrypted with `ragenix` and decrypted at activation via `agenix`.
 
-## Version Pinning and Updates
+## Updates
 
-Everything that runs is pinned in [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): the Tuwunel release (`tuwunelVersion` + hash) and the exact commits of the MindRoom and MindRoom Chat checkouts (`mindroomRev`, `cinnyRev`).
-The `update-pins` GitHub workflow bumps all three to the latest upstream daily and pushes only after `nix flake check` passes; run [scripts/update-pins.sh](scripts/update-pins.sh) to do the same by hand.
-Applying an update to a running container is `git pull` in the repo clone plus the same `nixos-rebuild switch` used to deploy — the checkout services move to the new pins and the affected services restart (a MindRoom Chat pin bump rebuilds the web UI, which adds a few minutes to the switch).
-A checkout with local changes is never touched, so in-container experiments survive switches; clean checkouts are reset to the pinned commit.
+Tuwunel, MindRoom, and MindRoom Chat versions are pinned in [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix) and bumped daily by CI (or locally via `./scripts/update-pins.sh`).
+To update, run `git pull` and re-run `nixos-rebuild switch --flake 'path:/mnt/repo#mindroom' --option sandbox false` (see [AGENTS.md](AGENTS.md#updating)). Clean checkouts advance to the new pins; checkouts with local changes are left untouched.
 
-## TLS Model (Read This Before Exposing Anything)
+## Layout
 
-Caddy binds **port 80 only**.
-In the reference setup an external reverse proxy (Traefik) owns the certificates for the public `*.lab.mindroom.chat` hostnames and forwards plain HTTP to this container.
-The well-known responses advertise `https://` URLs on that assumption.
-
-If you have no TLS-terminating proxy in front, do not expose port 80 to the internet as-is.
-Either put one there, or remove the `":80"` suffixes in [hosts/mindroom/caddy.nix](hosts/mindroom/caddy.nix) so Caddy provisions certificates itself (needs public DNS and reachability on 80/443).
-
-## Repository Layout
-
-- `hosts/mindroom/` — host composition: domains/pins (`constants.nix`), runtime toggles and SSH keys (`default.nix`), per-service config
-- `modules/` — reusable modules (base system, LXC glue, git checkouts, runtime services, secrets wiring)
-- `secrets/shared/` + `hosts/mindroom/secrets/` — encrypted secrets and their recipient lists (the repo ships placeholders only)
-- `templates/` — plaintext templates that seed each secret during bootstrap
-- `scripts/bootstrap-secrets.sh` — guided secret creation
-- `AGENTS.md` — the deployment runbook
-
-## Customization Points
-
-- [hosts/mindroom/default.nix](hosts/mindroom/default.nix): runtime toggles, operator SSH keys, state paths
-- [hosts/mindroom/constants.nix](hosts/mindroom/constants.nix): public domains, the Tuwunel release pin, and the MindRoom/MindRoom Chat commit pins
-- [hosts/mindroom/mindroom.nix](hosts/mindroom/mindroom.nix), [cinny.nix](hosts/mindroom/cinny.nix): which repos are checked out and which pins they follow
-
-Changing the public domains in `constants.nix` is not enough by itself: `MATRIX_SERVER_NAME` inside `lab-runtime.env.age` must match, and MindRoom Chat bakes its homeserver defaults into its own build, so a full domain change also needs a matching client-side change.
-
-## What Was Verified
-
-Verified end-to-end on 2026-07-08 by deploying a fresh `images:nixos/unstable` Incus container from this repo, following AGENTS.md literally:
-
-- `nix flake` evaluation and full toplevel build
-- secret bootstrap via `nix shell .#ragenix -c ./scripts/bootstrap-secrets.sh` (including the refusal path when recipients are missing) and agenix decryption inside the container at activation
-- `nixos-rebuild switch --flake 'path:/mnt/repo#mindroom'` from the host-mounted repo
-- `tuwunel`, `caddy` up; Matrix client API answering through Caddy
-- the in-container MindRoom Chat build (`mindroom-cinny-build`) and the web UI serving through Caddy
-- `mindroom-lab` starting, installing its uv environment from the `/srv/mindroom` checkout, and registering agents on the local homeserver with the bootstrap registration token
-
-Not verified: agent conversations with real LLM provider keys, the `chat` runtime against the hosted mindroom.chat service (needs real pairing credentials), and running with a TLS-terminating proxy in front.
-
-## Known Caveats
-
-- The first activation clones two repos and builds the MindRoom Chat web UI inside the container; on slow networks the UI service can take several minutes after the switch returns.
-  `systemctl --failed` plus the recovery commands in AGENTS.md cover the transient cases.
-- `mindroom-lab` needs at least one real LLM provider key (in `agent-integrations.env.age`) before agents respond to messages.
-- Nested virtualization (KVM/libvirt) is intentionally not enabled; a plain Incus container has no `/dev/kvm`.
+- `AGENTS.md` — full step-by-step deployment runbook
+- `flake.nix` — NixOS system, `ragenix` CLI, and eval check
+- `hosts/mindroom/` — pins/domains (`constants.nix`), SSH keys & runtime toggles (`default.nix`), service configs
+- `modules/` — Incus LXC glue (`lxc-container.nix`), base system, checkouts, agent runtimes, secrets
+- `secrets/` + `hosts/mindroom/secrets/` — encrypted secrets and recipient lists (placeholders only)
+- `templates/` + `scripts/` — secret templates, `bootstrap-secrets.sh`, `update-pins.sh`
