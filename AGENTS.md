@@ -220,7 +220,7 @@ incus exec mindroom -- /run/current-system/sw/bin/journalctl -u tuwunel -n 100 -
 
 ## 11. Register a Local Lab User and Verify an Agent Reply
 
-On first boot, `mindroom-lab` runs `mindroom config init --no-input --matrix-server self-hosted --provider openai` (filling your owner ID from `MINDROOM_OWNER_USER_ID` in `lab-runtime.env.age`), registers its agents (`@mindroom_user`, `@mindroom_router`, `@mindroom_mind`) on local Tuwunel, and initializes `/var/lib/mindroom/lab` as a Git repository with an initial commit.
+On first boot, `mindroom-lab` runs `mindroom config init --no-input --matrix-server self-hosted --provider openai` (filling your owner ID from `MINDROOM_OWNER_USER_ID` in `lab-runtime.env.age`), registers its agents (`@mindroom_user`, `@mindroom_router`, `@mindroom_mind`) on local Tuwunel, and initializes `/var/lib/mindroom/lab` as a Git repository, with an initial commit on fresh deployments (an upgraded state dir is left unstaged for review).
 Register the owner Matrix account, restart `mindroom-lab` so it invites you to the `personal` room, accept the invite, and verify a live reply from `@mindroom_mind` (requires a valid LLM provider key from step 7):
 
 ```bash
@@ -432,4 +432,6 @@ Verified end-to-end on 2026-07-08 by deploying a fresh `images:nixos/unstable` I
 - the in-container MindRoom Chat build (`mindroom-cinny-build`) and the web UI serving through Caddy
 - `mindroom-lab` starting, installing its uv environment from the `/srv/mindroom` checkout, and registering agents on the local homeserver with the bootstrap registration token
 
-Not verified: agent conversations with real LLM provider keys, the `chat` runtime against the hosted mindroom.chat service (needs real pairing credentials), and running with a TLS-terminating proxy in front.
+Re-verified on 2026-11-23 in a fresh throwaway Incus container: the step-11 test user got a live agent reply with a real OpenAI key; the agent ran `sudo -n id -u` (`0`), edited its own workspace and committed it to `/var/lib/mindroom/lab`; history survived `incus restart`.
+
+Not verified: the `chat` runtime against the hosted mindroom.chat service (needs real pairing credentials), and running with a TLS-terminating proxy in front.
